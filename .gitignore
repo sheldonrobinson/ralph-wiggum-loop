@@ -1,5 +1,6 @@
 # State files (created at runtime)
 **/.ralph/
+**/*.local.md
 
 # OS files
 .DS_Store

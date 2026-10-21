@@ -18,18 +18,18 @@ This project is a **cross-platform Agent Plugin** that provides both:
 
 ### CLI Mode
 ```bash
-./bin/ralph-loop-runner.sh "Implement user authentication with JWT tokens"
+./bin/ralph-wiggum-loop.sh "Implement user authentication with JWT tokens"
 ```
 
 ### MCP Server Mode
 ```bash
 # Run without arguments to start the MCP server
-./bin/ralph-loop-runner.sh
+./bin/ralph-wiggum-loop.sh
 ```
 
 ### With a Quality Profile
 ```bash
-./bin/ralph-loop-runner.sh "Write a REST API" --profile pro
+./bin/ralph-wiggum-loop.sh "Write a REST API" --profile pro
 ```
 
 ## Documentation

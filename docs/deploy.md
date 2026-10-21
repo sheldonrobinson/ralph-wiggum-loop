@@ -11,36 +11,86 @@ permalink: /deploy/
 ```bash
 git clone https://github.com/sheldonrobinson/ralph-wiggum-loop
 cd ralph-wiggum-loop
-chmod +x bin/ralph-loop-runner.sh
+chmod +x bin/ralph-wiggum-loop.sh bin/script-runner.sh
+```
+
+### Install Agent Skill to `.agents/skills/`
+
+Per the [Agent Skills Specification](https://agentskills.io/specification), copy the skill directory to `.agents/skills/` (project-level `<project>/.agents/skills/ralph-wiggum-loop` or user-level `~/.agents/skills/ralph-wiggum-loop`):
+
+```bash
+# Linux / macOS
+mkdir -p .agents/skills
+cp -R skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-loop
+```
+
+```powershell
+# Windows (PowerShell)
+New-Item -ItemType Directory -Path .agents/skills -Force | Out-Null
+Copy-Item -Recurse -Force skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-loop
 ```
 
 ## Configure as MCP Server
 
-Add to your MCP client configuration:
+The plugin includes `mcp.json` conforming to the Agent Plugins v1.0.0 specification with OS-specific `stdio` servers and a `streamable-http` server:
 
-### Linux / macOS
+- **Linux / macOS (Bash `stdio`):** `ralph-wiggum-loop`
+- **Windows (PowerShell 7+ `stdio`):** `ralph-wiggum-loop-pwsh`
+- **Windows (Windows PowerShell 5.1 `stdio`):** `ralph-wiggum-loop-powershell`
+- **Streamable HTTP (`http://127.0.0.1:8080/mcp`):** `ralph-wiggum-loop-http`
+
+### Linux / macOS (`stdio`)
 ```json
 {
   "mcpServers": {
-    "ralph-loop": {
-      "command": "/absolute/path/to/bin/ralph-loop-runner.sh",
-      "args": []
+    "ralph-wiggum-loop": {
+      "type": "stdio",
+      "command": "./bin/ralph-wiggum-loop.sh",
+      "args": ["--stdio"],
+      "cwd": "${PLUGIN_ROOT}"
     }
   }
 }
 ```
 
-### Windows (PowerShell)
+### Windows — PowerShell (`stdio`)
 ```json
 {
   "mcpServers": {
-    "ralph-loop": {
-      "command": "powershell.exe",
-      "args": ["-File", "C:\\path\\to\\bin\\ralph-loop-runner.ps1"]
+    "ralph-wiggum-loop-pwsh": {
+      "type": "stdio",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.ps1", "--stdio"],
+      "cwd": "${PLUGIN_ROOT}"
     }
   }
 }
 ```
+*(Use `"command": "powershell.exe"` on Windows PowerShell 5.1.)*
+
+### Streamable HTTP Service (`streamable-http`)
+
+To use the `ralph-wiggum-loop-http` entry (`http://127.0.0.1:8080/mcp`), start the HTTP service for your OS:
+
+- **Linux / macOS (Bash — requires `jq` and `socat` or `nc`):**
+  ```bash
+  # Start background service
+  ./bin/script-runner.sh start-http-server start --host 127.0.0.1 --port 8080
+
+  # Check status / Stop service
+  ./bin/script-runner.sh start-http-server status
+  ./bin/script-runner.sh start-http-server stop
+  ```
+
+- **Windows (PowerShell — uses built-in `.NET HttpListener`):**
+  ```powershell
+  # Start background service
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\bin\script-runner.ps1 start-http-server start --host 127.0.0.1 --port 8080
+
+  # Check status / Stop service
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\bin\script-runner.ps1 start-http-server status
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\bin\script-runner.ps1 start-http-server stop
+  ```
 
 ## Environment Variables
 
@@ -59,7 +109,7 @@ Add to your MCP client configuration:
 | `RALPH_MAX_RETRIES` | `3` | Max rate-limit retries |
 | `RALPH_INITIAL_BACKOFF` | `5` | Initial retry backoff in seconds |
 | `RALPH_THROTTLE_DELAY` | `0` | Proactive throttle delay in seconds |
-| `RALPH_RECIPE_DIR` | `/usr/local/share/ralph-loop-runner/recipes` | Recipes directory |
+| `RALPH_RECIPE_DIR` | `/usr/local/share/ralph-wiggum-loop/recipes` | Recipes directory |
 
 ## Quality Profiles
 
@@ -100,13 +150,13 @@ Apply a profile with `--profile <name>` or set `RALPH_PROFILE`.
 
 ```bash
 # Run with a task
-./bin/ralph-loop-runner.sh "Implement user authentication with JWT tokens"
+./bin/ralph-wiggum-loop.sh "Implement user authentication with JWT tokens"
 
 # Run with profile
-./bin/ralph-loop-runner.sh "Write a REST API" --profile pro
+./bin/ralph-wiggum-loop.sh "Write a REST API" --profile pro
 
 # Run as MCP server (no args = stdio mode)
-./bin/ralph-loop-runner.sh
+./bin/ralph-wiggum-loop.sh
 ```
 
 ## State Storage

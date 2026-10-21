@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-# ralph-loop-runner - Bash Implementation (Unified: MCP Server + CLI Orchestration)
+# ralph-wiggum-loop.sh - Ralph Loop Agent Plugin (Bash: MCP Server + CLI Orchestration)
 # Cross-platform implementation of the Ralph Loop iterative development technique
-# For Linux/macOS
+# Sources generic mcp-sdk.sh for shared MCP protocol utilities.
 
 set -euo pipefail
 
 # =============================================================================
-# CONFIGURATION (from environment variables with defaults)
+# SOURCE THE GENERIC MCP SDK
 # =============================================================================
-# Directory containing this script (used as a fallback for locating profiles).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Workspace directory: base for resolving relative paths (profiles, task files, guidelines).
-# Defaults to the current working directory; overridable via --workspace.
-WORKSPACE="$(pwd)"
+MCP_SERVER_NAME="ralph-wiggum-loop"
+MCP_SERVER_VERSION="1.1.0"
+source "${SCRIPT_DIR}/mcp-sdk.sh"
 
-RALPH_STATE_BASE="${WORKSPACE}/.ralph"
-RALPH_RECIPE_DIR="${RALPH_RECIPE_DIR:-/usr/local/share/ralph-loop-runner/recipes}"
+# =============================================================================
+# CONFIGURATION (from environment variables with defaults, supporting Agent Plugins PLUGIN_ROOT & PLUGIN_DATA)
+# =============================================================================
+PLUGIN_ROOT="${PLUGIN_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+WORKSPACE="${WORKSPACE:-${PLUGIN_ROOT}}"
+RALPH_STATE_BASE="${RALPH_STATE_BASE:-${PLUGIN_DATA:+${PLUGIN_DATA}/state}}"
+RALPH_STATE_BASE="${RALPH_STATE_BASE:-${WORKSPACE}/.ralph}"
+RALPH_RECIPE_DIR="${RALPH_RECIPE_DIR:-${PLUGIN_ROOT}/recipes}"
 SAFE_COMMANDS=("ls" "pwd" "echo" "date" "cat" "mkdir" "rm" "cp" "mv" "jq")
 CMD_TIMEOUT=30
 
@@ -35,12 +40,9 @@ MAX_ITERATIONS="${RALPH_MAX_ITERATIONS:-10}"
 WORK_GUIDELINES="${RALPH_WORK_GUIDELINES:-${RALPH_RECIPE_DIR}/ralph-work.yaml}"
 REVIEW_GUIDELINES="${RALPH_REVIEW_GUIDELINES:-${RALPH_RECIPE_DIR}/ralph-review.yaml}"
 MONITOR_MODEL="${RALPH_MONITOR_MODEL:-}"
-MONITOR_PROVIDER="${RALPH_MONITOR_PROVIDER:-}"
+MONITOR_PROVIDER="${RALPH_MONITOR_PROVIDER:-${RALPH_MONITON_PROVIDER:-}}"
 MONITOR_AGENT="${RALPH_MONITOR_AGENT:-goose}"
-# Profile support placeholder
 
-
-# CLI argument defaults (can be overridden by command line)
 CLI_TASK=""
 CLI_SESSION_ID=""
 
@@ -51,7 +53,7 @@ if ! command -v jq &> /dev/null; then
 fi
 
 # =============================================================================
-# UTILITY FUNCTIONS (shared by both modes)
+# SESSION STATE MANAGEMENT
 # =============================================================================
 get_state_dir() {
     local session_id="${1:-default}"
@@ -69,32 +71,9 @@ ensure_state_dir() {
     mkdir -p "$(get_state_dir "${session_id}")"
 }
 
-json_escape() {
-    printf '%s' "$1" | jq -Rs .
-}
-
-json_response() {
-    local id="${1}"
-    local result="${2}"
-    local error="${3}"
-    local resp='{"jsonrpc":"2.0"'
-    if [[ -n "${id}" && "${id}" != "null" ]]; then
-        resp+=",\"id\":${id}"
-    else
-        resp+=",\"id\":null"
-    fi
-    if [[ -n "${error}" ]]; then
-        resp+=",\"error\":${error}"
-    else
-        resp+=",\"result\":${result}"
-    fi
-    resp+='}'
-    echo "${resp}"
-}
-
 # Check if output contains rate limit / quota / resource errors
 is_rate_limit_error() {
-    local output="$1"
+    local output="${1:-}"
     if echo "${output}" | grep -iqE "(rate_limit|rate limit|429|quota_exceeded|quota exceeded|resource_exhausted|resource exhausted|too many requests|overloaded|throttled)"; then
         return 0
     else
@@ -111,20 +90,16 @@ apply_rate_throttling() {
 }
 
 # Retry helper with exponential backoff and rate throttling for LLM execution
-# Usage: execute_llm_with_retry <role_name> <session_id> <command...>
-# If session_id is provided, retry config is read from session config.json
-# Otherwise falls back to global env vars
 execute_llm_with_retry() {
     local role_name="$1"
     local session_id="$2"
     shift 2
     local cmd=("$@")
-    
-    # Load retry config from session config if session_id provided
+
     local max_retries="${RALPH_MAX_RETRIES}"
     local initial_backoff="${RALPH_INITIAL_BACKOFF}"
     local throttle_delay="${RALPH_THROTTLE_DELAY}"
-    
+
     if [[ -n "${session_id}" && "${session_id}" != "default" ]]; then
         local config
         config=$(get_config "${session_id}")
@@ -134,9 +109,9 @@ execute_llm_with_retry() {
             throttle_delay=$(echo "${config}" | jq -r '.throttleDelay // 0')
         fi
     fi
-    
+
     apply_rate_throttling "${throttle_delay}"
-    
+
     local attempt=1
     local backoff="${initial_backoff}"
     local max_attempts=$((max_retries + 1))
@@ -149,13 +124,11 @@ execute_llm_with_retry() {
         exit_code=$?
         set -e
 
-        # Success case (exit code 0 and non-empty output that is not a rate limit error string)
         if [[ ${exit_code} -eq 0 && -n "${output}" ]] && ! is_rate_limit_error "${output}"; then
             echo "${output}"
             return 0
         fi
 
-        # Check for rate limit or transient error
         if is_rate_limit_error "${output}" || [[ ${exit_code} -ne 0 ]]; then
             if [[ ${attempt} -lt ${max_attempts} ]]; then
                 echo "[WARN]  [${role_name}] Rate limit / resource constraint detected on attempt ${attempt}/${max_retries}. Retrying in ${backoff}s..." >&2
@@ -184,10 +157,10 @@ execute_llm_with_retry() {
 # =============================================================================
 set_config() {
     local session_id="${1}"
-    local worker_model="${2}"
-    local worker_provider="${3}"
-    local reviewer_model="${4}"
-    local reviewer_provider="${5}"
+    local worker_model="${2:-}"
+    local worker_provider="${3:-}"
+    local reviewer_model="${4:-}"
+    local reviewer_provider="${5:-}"
     local max_iterations="${6:-10}"
     local cross_model_enforced="${7:-true}"
     local worker_agent="${8:-goose}"
@@ -200,10 +173,11 @@ set_config() {
     local initial_backoff="${15:-5}"
     local throttle_delay="${16:-0}"
     local max_retries="${17:-3}"
-    
+
     ensure_state_dir "${session_id}"
-    local config_file="$(get_state_file "${session_id}" "config.json")"
-    
+    local config_file
+    config_file="$(get_state_file "${session_id}" "config.json")"
+
     jq -n \
         --arg workerModel "${worker_model}" \
         --arg workerProvider "${worker_provider}" \
@@ -221,7 +195,7 @@ set_config() {
         --argjson crossModelReviewEnforced "${cross_model_enforced}" \
         --arg workGuidelines "${work_guidelines}" \
         --arg reviewGuidelines "${review_guidelines}" \
-        --arg configuredAt "$(date -Iseconds)" \
+        --arg configuredAt "$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
         '{
             workerModel: $workerModel,
             workerProvider: $workerProvider,
@@ -245,7 +219,8 @@ set_config() {
 
 get_config() {
     local session_id="${1:-default}"
-    local config_file="$(get_state_file "${session_id}" "config.json")"
+    local config_file
+    config_file="$(get_state_file "${session_id}" "config.json")"
     if [[ -f "${config_file}" ]]; then
         cat "${config_file}"
     else
@@ -272,7 +247,7 @@ validate_cross_model() {
     worker_provider=$(echo "${config}" | jq -r '.workerProvider // empty')
     reviewer_model=$(echo "${config}" | jq -r '.reviewerModel // empty')
     reviewer_provider=$(echo "${config}" | jq -r '.reviewerProvider // empty')
-    
+
     if [[ -n "${worker_model}" && -n "${reviewer_model}" && \
           "${worker_model}" == "${reviewer_model}" && \
           "${worker_provider}" == "${reviewer_provider}" ]]; then
@@ -285,21 +260,18 @@ validate_cross_model() {
 # =============================================================================
 # ADAPTIVE PROFILE SWITCHING
 # =============================================================================
-# Resolve a profile name/path to an existing file.
-# Search order:
-#   1. $WORKSPACE/profiles/<name>.json
-#   2. $WORKSPACE/profiles/<name>   (name already has extension)
-#   3. $WORKSPACE/<name>            (explicit path relative to workspace)
-#   4. <name> as literal (absolute or CWD-relative) path
-#   5. Script's own profiles/ dir (fallback when run outside the project)
 resolve_profile_path() {
     local profile_name="${1}"
     local cand
     local candidates=(
+        "${PLUGIN_ROOT:-}/profiles/${profile_name}.json"
+        "${PLUGIN_ROOT:-}/profiles/${profile_name}"
         "${WORKSPACE}/profiles/${profile_name}.json"
         "${WORKSPACE}/profiles/${profile_name}"
         "${WORKSPACE}/${profile_name}"
         "${profile_name}"
+        "${SCRIPT_DIR}/../profiles/${profile_name}.json"
+        "${SCRIPT_DIR}/../profiles/${profile_name}"
         "${SCRIPT_DIR}/profiles/${profile_name}.json"
         "${SCRIPT_DIR}/profiles/${profile_name}"
     )
@@ -312,7 +284,6 @@ resolve_profile_path() {
     return 1
 }
 
-# Apply a named/pathed profile to a session's config.json
 apply_profile() {
     local session_id="${1}"
     local profile_name="${2}"
@@ -349,13 +320,10 @@ apply_profile() {
     return 0
 }
 
-# Detect a resource / rate-limit / quota trigger in the combined output/feedback.
-# Inputs: $1 = worker output, $2 = reviewer output, $3 = feedback
-# Returns 0 (true) if a resource trigger is detected, 1 otherwise.
 test_resource_trigger() {
-    local worker_output="${1}"
-    local reviewer_output="${2}"
-    local feedback="${3}"
+    local worker_output="${1:-}"
+    local reviewer_output="${2:-}"
+    local feedback="${3:-}"
 
     if [[ -n "${worker_output}" ]] && is_rate_limit_error "${worker_output}"; then
         return 0
@@ -369,22 +337,17 @@ test_resource_trigger() {
     return 1
 }
 
-# Detect a low-quality / token-repetition trigger in the combined output/feedback.
-# Inputs: $1 = worker output, $2 = reviewer output, $3 = feedback
-# Returns 0 (true) if a quality trigger is detected, 1 otherwise.
 test_quality_trigger() {
-    local worker_output="${1}"
-    local reviewer_output="${2}"
-    local feedback="${3}"
+    local worker_output="${1:-}"
+    local reviewer_output="${2:-}"
+    local feedback="${3:-}"
     local text
 
     for text in "${worker_output}" "${reviewer_output}" "${feedback}"; do
         [[ -z "${text}" ]] && continue
-        # Explicit low-quality markers
         if echo "${text}" | grep -iqE "(low quality|poor quality|nonsensical|incoherent|garbled|repetitive|repeating itself|lorem ipsum|placeholder)"; then
             return 0
         fi
-        # Token repetition: a word of length >= 8 repeated 6+ times
         if echo "${text}" | grep -oE '\b\w{8,}\b' | tr '[:upper:]' '[:lower:]' | sort | uniq -c | awk '$1 >= 6 {found=1} END {exit !found}'; then
             return 0
         fi
@@ -392,9 +355,6 @@ test_quality_trigger() {
     return 1
 }
 
-# Decide the next profile for a given strategy + trigger + current profile.
-# Inputs: $1 = strategy (quality|price|balanced), $2 = trigger (resource|quality), $3 = current profile
-# Outputs (on stdout) the next profile name, or empty string if no further switch.
 get_adaptive_profile_switch() {
     local strategy="${1}"
     local trigger="${2}"
@@ -411,13 +371,11 @@ get_adaptive_profile_switch() {
         *)                   echo ""; return ;;
     esac
 
-    # Guard against an empty order (should not happen once the case above matches).
     if [[ ${#order[@]} -eq 0 ]]; then
         echo ""
         return
     fi
 
-    # Locate the current profile's position in the order (0-based index).
     local idx=-1
     local i
     for ((i = 0; i < ${#order[@]}; i++)); do
@@ -427,20 +385,14 @@ get_adaptive_profile_switch() {
         fi
     done
 
-    # If the current profile is empty or not present in this order, default to the
-    # start position (the first entry in the order) rather than relying on any
-    # modulo arithmetic coincidence for an unmatched index.
     if [[ -z "${current_profile}" || ${idx} -eq -1 ]]; then
         echo "${order[0]}"
         return
     fi
 
-    # Step forward, cycling back to the start of the order when reaching the end.
     echo "${order[$(( (idx + 1) % ${#order[@]} ))]}"
 }
 
-# Switch profile and echo back the new config values as pipe-delimited:
-# worker_model|worker_provider|worker_agent|reviewer_model|reviewer_provider|reviewer_agent|monitor_model|monitor_provider|monitor_agent|max_iterations|initial_backoff|throttle_delay|max_retries
 switch_adaptive_profile() {
     local session_id="${1}"
     local new_profile="${2}"
@@ -470,22 +422,25 @@ switch_adaptive_profile() {
 
     echo "${worker_model}|${worker_provider}|${worker_agent}|${reviewer_model}|${reviewer_provider}|${reviewer_agent}|${monitor_model}|${monitor_provider}|${monitor_agent}|${max_iterations}|${initial_backoff}|${throttle_delay}|${max_retries}"
 }
+
 # =============================================================================
-# TASK MANAGEMENT
+# TASK, WORK, REVIEW & STATUS MANAGEMENT
 # =============================================================================
 set_task() {
     local session_id="${1}"
     local task="${2}"
     ensure_state_dir "${session_id}"
-    local task_file="$(get_state_file "${session_id}" "task.json")"
-    jq -n --arg task "${task}" --arg createdAt "$(date -Iseconds)" \
+    local task_file
+    task_file="$(get_state_file "${session_id}" "task.json")"
+    jq -n --arg task "${task}" --arg createdAt "$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
         '{task: $task, createdAt: $createdAt}' > "${task_file}"
     rm -f "$(get_state_file "${session_id}" "RALPH-BLOCKED.md")"
 }
 
 get_task() {
     local session_id="${1:-default}"
-    local task_file="$(get_state_file "${session_id}" "task.json")"
+    local task_file
+    task_file="$(get_state_file "${session_id}" "task.json")"
     if [[ -f "${task_file}" ]]; then
         cat "${task_file}"
     else
@@ -493,29 +448,28 @@ get_task() {
     fi
 }
 
-# =============================================================================
-# WORK MANAGEMENT & ITERATION HISTORY
-# =============================================================================
 set_work() {
     local session_id="${1}"
     local work="${2}"
     local summary="${3}"
     local iteration="${4}"
     ensure_state_dir "${session_id}"
-    local work_file="$(get_state_file "${session_id}" "work.json")"
+    local work_file
+    work_file="$(get_state_file "${session_id}" "work.json")"
     jq -n \
         --arg work "${work}" \
         --arg summary "${summary}" \
-        --arg submittedAt "$(date -Iseconds)" \
+        --arg submittedAt "$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
         --argjson iteration "${iteration}" \
         '{work: $work, summary: $summary, submittedAt: $submittedAt, iteration: $iteration}' > "${work_file}"
     echo '{"ok":true}' > "$(get_state_file "${session_id}" "work-complete.txt")"
 
-    # Persist iteration history
-    local hist_dir="$(get_state_dir "${session_id}")/history/iteration_${iteration}"
+    local hist_dir
+    hist_dir="$(get_state_dir "${session_id}")/history/iteration_${iteration}"
     mkdir -p "${hist_dir}"
     cp "${work_file}" "${hist_dir}/work.json"
-    local work_out="$(get_state_file "${session_id}" "work.out")"
+    local work_out
+    work_out="$(get_state_file "${session_id}" "work.out")"
     if [[ -f "${work_out}" ]]; then
         cp "${work_out}" "${hist_dir}/work.out"
     fi
@@ -523,7 +477,8 @@ set_work() {
 
 get_work() {
     local session_id="${1:-default}"
-    local work_file="$(get_state_file "${session_id}" "work.json")"
+    local work_file
+    work_file="$(get_state_file "${session_id}" "work.json")"
     if [[ -f "${work_file}" ]]; then
         cat "${work_file}"
     else
@@ -531,30 +486,29 @@ get_work() {
     fi
 }
 
-# =============================================================================
-# REVIEW MANAGEMENT & ITERATION HISTORY
-# =============================================================================
 set_review() {
     local session_id="${1}"
     local decision="${2}"
     local feedback="${3}"
     local iteration="${4}"
     ensure_state_dir "${session_id}"
-    local review_file="$(get_state_file "${session_id}" "review.json")"
+    local review_file
+    review_file="$(get_state_file "${session_id}" "review.json")"
     jq -n \
         --arg decision "${decision}" \
         --arg feedback "${feedback}" \
-        --arg reviewedAt "$(date -Iseconds)" \
+        --arg reviewedAt "$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
         --argjson iteration "${iteration}" \
         '{decision: $decision, feedback: $feedback, reviewedAt: $reviewedAt, iteration: $iteration}' > "${review_file}"
     jq -n --arg decision "${decision}" '{decision: $decision}' > "$(get_state_file "${session_id}" "review-result.txt")"
     jq -n --arg feedback "${feedback}" '{feedback: $feedback}' > "$(get_state_file "${session_id}" "review-feedback.txt")"
-    
-    # Persist iteration history
-    local hist_dir="$(get_state_dir "${session_id}")/history/iteration_${iteration}"
+
+    local hist_dir
+    hist_dir="$(get_state_dir "${session_id}")/history/iteration_${iteration}"
     mkdir -p "${hist_dir}"
     cp "${review_file}" "${hist_dir}/review.json"
-    local review_out="$(get_state_file "${session_id}" "review.out")"
+    local review_out
+    review_out="$(get_state_file "${session_id}" "review.out")"
     if [[ -f "${review_out}" ]]; then
         cp "${review_out}" "${hist_dir}/review.out"
     fi
@@ -566,7 +520,8 @@ set_review() {
 
 get_review() {
     local session_id="${1:-default}"
-    local review_file="$(get_state_file "${session_id}" "review.json")"
+    local review_file
+    review_file="$(get_state_file "${session_id}" "review.json")"
     if [[ -f "${review_file}" ]]; then
         cat "${review_file}"
     else
@@ -576,9 +531,10 @@ get_review() {
 
 get_review_result() {
     local session_id="${1:-default}"
-    local result_file="$(get_state_file "${session_id}" "review-result.txt")"
+    local result_file
+    result_file="$(get_state_file "${session_id}" "review-result.txt")"
     if [[ -f "${result_file}" ]]; then
-        cat "${result_file}" | jq -r '.decision // empty'
+        jq -r '.decision // empty' "${result_file}"
     else
         echo ""
     fi
@@ -586,41 +542,39 @@ get_review_result() {
 
 get_feedback() {
     local session_id="${1:-default}"
-    local feedback_file="$(get_state_file "${session_id}" "review-feedback.txt")"
+    local feedback_file
+    feedback_file="$(get_state_file "${session_id}" "review-feedback.txt")"
     if [[ -f "${feedback_file}" ]]; then
-        cat "${feedback_file}" | jq -r '.feedback // empty'
+        jq -r '.feedback // empty' "${feedback_file}"
     else
         echo ""
     fi
 }
 
-# =============================================================================
-# STATUS MANAGEMENT
-# =============================================================================
 get_status() {
     local session_id="${1:-default}"
     local max_iterations="${2:-10}"
-    
-    local task work review review_result feedback blocked config
+
+    local task work review review_result feedback config
     task=$(get_task "${session_id}")
     work=$(get_work "${session_id}")
     review=$(get_review "${session_id}")
     review_result=$(get_review_result "${session_id}")
     feedback=$(get_feedback "${session_id}")
     config=$(get_config "${session_id}")
-    
+
     local blocked="false"
     if [[ -f "$(get_state_file "${session_id}" "RALPH-BLOCKED.md")" ]]; then
         blocked="true"
     fi
-    
+
     local cross_model_validation
     cross_model_validation=$(validate_cross_model "${session_id}")
-    
+
     local phase="WORK"
     local status="running"
     local current_iteration=1
-    
+
     if [[ "${blocked}" == "true" ]]; then
         phase="BLOCKED"
         status="blocked"
@@ -641,26 +595,26 @@ get_status() {
         status="running"
         current_iteration=$(echo "${work}" | jq -r '.iteration // 1')
     fi
-    
+
     if [[ ${current_iteration} -gt ${max_iterations} && "${status}" == "running" ]]; then
         status="max_iterations_reached"
         phase="COMPLETE"
     fi
-    
+
     local task_text="" created_at=""
     if [[ -n "${task}" ]]; then
         task_text=$(echo "${task}" | jq -r '.task // empty')
         created_at=$(echo "${task}" | jq -r '.createdAt // empty')
     fi
-    
+
     local work_summary=""
     if [[ -n "${work}" ]]; then
         work_summary=$(echo "${work}" | jq -r '.summary // empty')
     fi
-    
+
     local worker_model="" worker_provider="" worker_agent="" reviewer_model="" reviewer_provider="" reviewer_agent=""
     local monitor_model="" monitor_provider="" monitor_agent=""
-    local cross_model_enforced="" cross_model_valid="" cross_model_warning="" work_guidelines="" review_guidelines=""
+    local cross_model_enforced="true" cross_model_valid="true" cross_model_warning="" work_guidelines="" review_guidelines=""
     if [[ -n "${config}" ]]; then
         worker_model=$(echo "${config}" | jq -r '.workerModel // empty')
         worker_provider=$(echo "${config}" | jq -r '.workerProvider // empty')
@@ -677,9 +631,8 @@ get_status() {
         work_guidelines=$(echo "${config}" | jq -r '.workGuidelines // empty')
         review_guidelines=$(echo "${config}" | jq -r '.reviewGuidelines // empty')
     fi
-    
-    local status_json
-    status_json=$(jq -n \
+
+    jq -n \
         --arg sessionId "${session_id}" \
         --argjson currentIteration "${current_iteration}" \
         --argjson maxIterations "${max_iterations}" \
@@ -689,7 +642,7 @@ get_status() {
         --arg lastWorkSummary "${work_summary}" \
         --arg lastFeedback "${feedback}" \
         --arg createdAt "${created_at}" \
-        --arg updatedAt "$(date -Iseconds)" \
+        --arg updatedAt "$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
         --arg workerModel "${worker_model}" \
         --arg workerProvider "${worker_provider}" \
         --arg workerAgent "${worker_agent}" \
@@ -729,9 +682,7 @@ get_status() {
             crossModelReviewWarning: (if $crossModelWarning == "" then null else $crossModelWarning end),
             workGuidelines: (if $workGuidelines == "" then null else $workGuidelines end),
             reviewGuidelines: (if $reviewGuidelines == "" then null else $reviewGuidelines end)
-        }')
-    
-    echo "${status_json}"
+        }'
 }
 
 cleanup_for_next_iteration() {
@@ -764,7 +715,6 @@ block_iteration() {
 # =============================================================================
 # ORCHESTRATION FUNCTIONS (CLI mode & Monitoring Agent)
 # =============================================================================
-
 call_llm_worker() {
     local task="$1"
     local feedback="$2"
@@ -775,11 +725,11 @@ call_llm_worker() {
     local worker_agent="$7"
     local work_guidelines="$8"
     local is_existing="${9:-false}"
-    
+
     local prompt="You are the WORKER in a Ralph Loop iteration ${iteration}.
-    
+
 Task: ${task}"
-    
+
     if [[ -n "${feedback}" ]]; then
         prompt="${prompt}
 
@@ -787,7 +737,7 @@ Previous feedback from reviewer: ${feedback}
 
 Please revise your work based on this feedback."
     fi
-    
+
     prompt="${prompt}
 
 Provide your complete work output and a brief summary.
@@ -797,15 +747,15 @@ WORK:
 
 SUMMARY:
 [brief summary of what you did]"
-    
+
     case "${worker_agent}" in
-        anthropic)
+        anthropic|claude)
             execute_llm_with_retry "WORKER" "${session_id}" bash -c "echo $(json_escape "${prompt}") | claude --model ${worker_model} --print"
             ;;
         openai)
             execute_llm_with_retry "WORKER" "${session_id}" bash -c "echo $(json_escape "${prompt}") | openai chat --model ${worker_model} --no-stream"
             ;;
-        google)
+        google|gemini)
             execute_llm_with_retry "WORKER" "${session_id}" bash -c "echo $(json_escape "${prompt}") | gemini --model ${worker_model} --format=text"
             ;;
         copilot)
@@ -830,7 +780,7 @@ SUMMARY:
                 goose_args+=("--no-session")
             fi
             goose_args+=("--text" "${prompt}")
-            
+
             execute_llm_with_retry "WORKER" "${session_id}" env GOOSE_MODEL="${worker_model}" GOOSE_PROVIDER="${worker_provider}" goose "${goose_args[@]}"
             ;;
         *)
@@ -851,9 +801,9 @@ call_llm_reviewer() {
     local reviewer_agent="$8"
     local review_guidelines="$9"
     local is_existing="${10:-false}"
-    
+
     local prompt="You are the REVIEWER in a Ralph Loop iteration ${iteration}.
-    
+
 Original Task: ${task}
 
 Worker's Work:
@@ -867,15 +817,15 @@ If REVISE, provide specific, actionable feedback for the worker.
 Output format:
 DECISION: SHIP or REVISE
 FEEDBACK: [your feedback, or empty if SHIP]"
-    
+
     case "${reviewer_agent}" in
-        anthropic)
+        anthropic|claude)
             execute_llm_with_retry "REVIEWER" "${session_id}" bash -c "echo $(json_escape "${prompt}") | claude --model ${reviewer_model} --print"
             ;;
         openai)
             execute_llm_with_retry "REVIEWER" "${session_id}" bash -c "echo $(json_escape "${prompt}") | openai chat --model ${reviewer_model} --no-stream"
             ;;
-        google)
+        google|gemini)
             execute_llm_with_retry "REVIEWER" "${session_id}" bash -c "echo $(json_escape "${prompt}") | gemini --model ${reviewer_model} --format=text"
             ;;
         copilot)
@@ -896,7 +846,7 @@ FEEDBACK: [your feedback, or empty if SHIP]"
                 goose_args+=("--no-session")
             fi
             goose_args+=("--text" "${prompt}")
-            
+
             execute_llm_with_retry "REVIEWER" "${session_id}" env GOOSE_MODEL="${reviewer_model}" GOOSE_PROVIDER="${reviewer_provider}" goose "${goose_args[@]}"
             ;;
         *)
@@ -912,20 +862,19 @@ call_llm_monitor() {
     local monitor_model="${3:-${MONITOR_MODEL}}"
     local monitor_provider="${4:-${MONITOR_PROVIDER}}"
     local monitor_agent="${5:-${MONITOR_AGENT}}"
-    
-    # Fall back to worker settings if monitor not configured
+
     if [[ -z "${monitor_model}" ]]; then monitor_model="${WORKER_MODEL}"; fi
     if [[ -z "${monitor_provider}" ]]; then monitor_provider="${WORKER_PROVIDER}"; fi
     if [[ -z "${monitor_agent}" ]]; then monitor_agent="${WORKER_AGENT}"; fi
-    
+
     case "${monitor_agent}" in
-        anthropic)
+        anthropic|claude)
             execute_llm_with_retry "MONITOR" "${session_id}" bash -c "echo $(json_escape "${prompt}") | claude --model ${monitor_model} --print"
             ;;
         openai)
             execute_llm_with_retry "MONITOR" "${session_id}" bash -c "echo $(json_escape "${prompt}") | openai chat --model ${monitor_model} --no-stream"
             ;;
-        google)
+        google|gemini)
             execute_llm_with_retry "MONITOR" "${session_id}" bash -c "echo $(json_escape "${prompt}") | gemini --model ${monitor_model} --format=text"
             ;;
         goose)
@@ -944,18 +893,17 @@ parse_worker_output() {
     local monitor_provider="${4:-}"
     local monitor_agent="${5:-}"
     local output_file="${6:-}"
-    
+
     local work=""
     local summary=""
-    
+
     if [[ "${output}" == *"WORK:"* ]]; then
         work=$(echo "${output}" | awk '/^WORK:/{flag=1; next} /^SUMMARY:/{flag=0} flag')
     fi
     if [[ "${output}" == *"SUMMARY:"* ]]; then
         summary=$(echo "${output}" | awk '/^SUMMARY:/{flag=1; next} flag')
     fi
-    
-    # Regex failed -- try Monitor LLM fallback
+
     if [[ -z "${work}" || -z "${summary}" ]]; then
         echo "  Regex parsing failed for worker output, consulting Monitor LLM..." >&2
         local monitor_prompt
@@ -987,9 +935,9 @@ SUMMARY:
 ---
 ${output}"
         fi
-        
+
         local monitor_response
-        monitor_response=$(call_llm_monitor "${monitor_prompt}" "${session_id}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}")
+        monitor_response=$(call_llm_monitor "${monitor_prompt}" "${session_id}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}" || true)
         if [[ -n "${monitor_response}" ]]; then
             if [[ "${monitor_response}" == *"WORK:"* ]]; then
                 work=$(echo "${monitor_response}" | awk '/^WORK:/{flag=1; next} /^SUMMARY:/{flag=0} flag')
@@ -998,14 +946,14 @@ ${output}"
                 summary=$(echo "${monitor_response}" | awk '/^SUMMARY:/{flag=1; next} flag')
             fi
         fi
-        
+
         if [[ -n "${work}" || -n "${summary}" ]]; then
             echo "  Monitor LLM parsed successfully." >&2
         else
             echo "  Monitor LLM also could not parse the output." >&2
         fi
     fi
-    
+
     echo "${work}|${summary}"
 }
 
@@ -1016,18 +964,17 @@ parse_reviewer_output() {
     local monitor_provider="${4:-}"
     local monitor_agent="${5:-}"
     local output_file="${6:-}"
-    
+
     local decision=""
     local feedback=""
-    
+
     if [[ "${output}" == *"DECISION:"* ]]; then
         decision=$(echo "${output}" | awk '/^DECISION:/{print toupper($2); exit}')
     fi
     if [[ "${output}" == *"FEEDBACK:"* ]]; then
         feedback=$(echo "${output}" | awk '/^FEEDBACK:/{flag=1; next} flag')
     fi
-    
-    # Regex failed -- try Monitor LLM fallback
+
     if [[ "${decision}" != "SHIP" && "${decision}" != "REVISE" ]]; then
         echo "  Regex parsing failed for reviewer output, consulting Monitor LLM..." >&2
         local monitor_prompt
@@ -1047,9 +994,9 @@ FEEDBACK: [the review feedback]
 ---
 ${output}"
         fi
-        
+
         local monitor_response
-        monitor_response=$(call_llm_monitor "${monitor_prompt}" "${session_id}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}")
+        monitor_response=$(call_llm_monitor "${monitor_prompt}" "${session_id}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}" || true)
         if [[ -n "${monitor_response}" ]]; then
             if [[ "${monitor_response}" == *"DECISION:"* ]]; then
                 decision=$(echo "${monitor_response}" | awk '/^DECISION:/{print toupper($2); exit}')
@@ -1058,22 +1005,25 @@ ${output}"
                 feedback=$(echo "${monitor_response}" | awk '/^FEEDBACK:/{flag=1; next} flag')
             fi
         fi
-        
+
         if [[ "${decision}" == "SHIP" || "${decision}" == "REVISE" ]]; then
             echo "  Monitor LLM parsed successfully." >&2
         else
             echo "  Monitor LLM also could not parse the output." >&2
         fi
     fi
-    
+
     echo "${decision}|${feedback}"
 }
 
-# CLI orchestration main function
+# =============================================================================
+# CLI ORCHESTRATION MODE
+# =============================================================================
 run_cli() {
     local enable_adaptive="false"
     local adaptive_strategy="balanced"
-    local current_profile=""
+    local current_profile="${RALPH_PROFILE:-}"
+    local cli_profile=""
     local worker_model="${WORKER_MODEL}"
     local worker_provider="${WORKER_PROVIDER}"
     local worker_agent="${WORKER_AGENT}"
@@ -1091,14 +1041,18 @@ run_cli() {
     local throttle_delay="${RALPH_THROTTLE_DELAY}"
     local task_input=""
     local workspace="${WORKSPACE}"
-    
-    # Parse command line arguments - options first, then task as final positional arg
+
     while [[ $# -gt 0 ]]; do
         case "${1}" in
             -h|--help)
                 echo "Usage: $0 [options] \"task description\" or $0 [options] /path/to/task.md"
                 echo ""
+                echo "Modes:"
+                echo "  MCP Server  : $0 [--stdio | --http | --streamable-http] [--port PORT]"
+                echo "  CLI Mode    : $0 [options] \"task description\" [--profile pro]"
+                echo ""
                 echo "Options:"
+                echo "  --profile PROFILE            Quality profile (lite, plus, pro, super, ultra)"
                 echo "  --worker-model MODEL         Worker model (default: \$RALPH_WORKER_MODEL)"
                 echo "  --worker-provider PROVIDER   Worker provider (default: \$RALPH_WORKER_PROVIDER)"
                 echo "  --worker-agent AGENT         Worker agent (default: \$RALPH_WORKER_AGENT)"
@@ -1120,64 +1074,68 @@ run_cli() {
                 echo "  --workspace DIR              Workspace directory (default: current working directory)"
                 exit 0
                 ;;
+            --profile)
+                cli_profile="${2:-}"
+                shift 2
+                ;;
             --worker-model)
-                worker_model="${2}"
+                worker_model="${2:-}"
                 shift 2
                 ;;
             --worker-provider)
-                worker_provider="${2}"
+                worker_provider="${2:-}"
                 shift 2
                 ;;
             --worker-agent)
-                worker_agent="${2}"
+                worker_agent="${2:-}"
                 shift 2
                 ;;
             --reviewer-model)
-                reviewer_model="${2}"
+                reviewer_model="${2:-}"
                 shift 2
                 ;;
             --reviewer-provider)
-                reviewer_provider="${2}"
+                reviewer_provider="${2:-}"
                 shift 2
                 ;;
             --reviewer-agent)
-                reviewer_agent="${2}"
+                reviewer_agent="${2:-}"
                 shift 2
                 ;;
             --monitor-model)
-                monitor_model="${2}"
+                monitor_model="${2:-}"
                 shift 2
                 ;;
             --monitor-provider)
-                monitor_provider="${2}"
+                monitor_provider="${2:-}"
                 shift 2
                 ;;
             --monitor-agent)
-                monitor_agent="${2}"
+                monitor_agent="${2:-}"
                 shift 2
                 ;;
             --max-iterations)
-                max_iterations="${2}"
+                max_iterations="${2:-${MAX_ITERATIONS}}"
                 shift 2
                 ;;
             --work-guidelines)
-                work_guidelines="${2}"
+                work_guidelines="${2:-}"
                 shift 2
                 ;;
             --review-guidelines)
-                review_guidelines="${2}"
+                review_guidelines="${2:-}"
                 shift 2
                 ;;
             --max-retries)
-                max_retries="${2}"
+                max_retries="${2:-${RALPH_MAX_RETRIES}}"
                 shift 2
                 ;;
             --initial-backoff)
-                initial_backoff="${2}"
+                initial_backoff="${2:-${RALPH_INITIAL_BACKOFF}}"
                 shift 2
                 ;;
             --throttle-delay)
-                throttle_delay="${2}"
+                throttle_delay="${2:-${RALPH_THROTTLE_DELAY}}"
                 shift 2
                 ;;
             --enable-adaptive)
@@ -1185,42 +1143,62 @@ run_cli() {
                 shift
                 ;;
             --adaptive-strategy)
-                adaptive_strategy="${2}"
+                adaptive_strategy="${2:-balanced}"
                 shift 2
                 ;;
             --workspace)
-                workspace="${2}"
+                workspace="${2:-}"
                 shift 2
                 ;;
             --session-id)
-                CLI_SESSION_ID="${2}"
+                CLI_SESSION_ID="${2:-}"
                 shift 2
                 ;;
             -*)
-                echo "Error: Unknown option: ${1}"
+                echo "Error: Unknown option: ${1}" >&2
                 exit 1
                 ;;
             *)
-                # This is the task input (file path or task description)
                 task_input="${1}"
                 shift
                 ;;
         esac
     done
-    
-    # Update global retry config from CLI options
+
     RALPH_MAX_RETRIES="${max_retries}"
     RALPH_INITIAL_BACKOFF="${initial_backoff}"
     RALPH_THROTTLE_DELAY="${throttle_delay}"
-    
-    # Normalize workspace: resolve to an absolute path so relative paths resolve against it.
+
     if [[ -n "${workspace}" ]]; then
         WORKSPACE="$(cd "${workspace}" 2>/dev/null && pwd || echo "${workspace}")"
         RALPH_STATE_BASE="${WORKSPACE}/.ralph"
     fi
-    
-    # Get task from file or argument (resolve relative to workspace first)
-    local task
+
+    # Load profile settings if --profile or adaptive mode was specified
+    if [[ -n "${cli_profile}" ]]; then
+        local profile_path
+        if profile_path="$(resolve_profile_path "${cli_profile}")"; then
+            [[ -z "${worker_model}" ]] && worker_model=$(jq -r '.workerModel // empty' "${profile_path}")
+            [[ -z "${worker_provider}" ]] && worker_provider=$(jq -r '.workerProvider // empty' "${profile_path}")
+            worker_agent=$(jq -r '.workerAgent // "goose"' "${profile_path}")
+            [[ -z "${reviewer_model}" ]] && reviewer_model=$(jq -r '.reviewerModel // empty' "${profile_path}")
+            [[ -z "${reviewer_provider}" ]] && reviewer_provider=$(jq -r '.reviewerProvider // empty' "${profile_path}")
+            reviewer_agent=$(jq -r '.reviewerAgent // "goose"' "${profile_path}")
+            [[ -z "${monitor_model}" ]] && monitor_model=$(jq -r '.monitorModel // empty' "${profile_path}")
+            [[ -z "${monitor_provider}" ]] && monitor_provider=$(jq -r '.monitorProvider // empty' "${profile_path}")
+            monitor_agent=$(jq -r '.monitorAgent // "goose"' "${profile_path}")
+            max_iterations=$(jq -r '.maxIterations // 10' "${profile_path}")
+            initial_backoff=$(jq -r '.initialBackoff // 5' "${profile_path}")
+            throttle_delay=$(jq -r '.throttleDelay // 0' "${profile_path}")
+            max_retries=$(jq -r '.maxRetries // 3' "${profile_path}")
+            current_profile="${cli_profile}"
+        else
+            echo "[ERROR] Profile not found: ${cli_profile}" >&2
+            exit 1
+        fi
+    fi
+
+    local task=""
     local task_file=""
     if [[ -n "${task_input}" ]]; then
         if [[ -f "${task_input}" ]]; then
@@ -1234,72 +1212,61 @@ run_cli() {
     else
         task="${task_input}"
     fi
-    
+
     if [[ -z "${task}" ]]; then
-        echo "Error: No task provided"
-        echo "Usage: $0 [options] \"task description\" or $0 [options] /path/to/task.md"
-        echo ""
-        echo "Options:"
-        echo "  --worker-model MODEL         Worker model (default: \$RALPH_WORKER_MODEL)"
-        echo "  --worker-provider PROVIDER   Worker provider (default: \$RALPH_WORKER_PROVIDER)"
-        echo "  --worker-agent AGENT         Worker agent (default: \$RALPH_WORKER_AGENT)"
-        echo "  --reviewer-model MODEL       Reviewer model (default: \$RALPH_REVIEWER_MODEL)"
-        echo "  --reviewer-provider PROVIDER Reviewer provider (default: \$RALPH_REVIEWER_PROVIDER)"
-        echo "  --reviewer-agent AGENT       Reviewer agent (default: \$RALPH_REVIEWER_AGENT)"
-        echo "  --monitor-model MODEL        Monitor model (default: \$RALPH_MONITOR_MODEL)"
-        echo "  --monitor-provider PROVIDER  Monitor provider (default: \$RALPH_MONITOR_PROVIDER)"
-        echo "  --monitor-agent AGENT        Monitor agent (default: \$RALPH_MONITOR_AGENT)"
-        echo "  --max-iterations N           Max iterations, -1 for infinite (default: \$RALPH_MAX_ITERATIONS)"
-        echo "  --work-guidelines FILE       Work guidelines/recipe file (default: \$RALPH_WORK_GUIDELINES)"
-        echo "  --review-guidelines FILE     Review guidelines/recipe file (default: \$RALPH_REVIEW_GUIDELINES)"
-        echo "  --session-id ID              Session ID (default: auto-generated)"
-        echo "  --max-retries N              Max retry attempts for rate limits (default: \$RALPH_MAX_RETRIES)"
-        echo "  --initial-backoff N          Initial backoff seconds for retries (default: \$RALPH_INITIAL_BACKOFF)"
-        echo "  --throttle-delay N           Delay between requests in seconds (default: \$RALPH_THROTTLE_DELAY)"
-        echo "  --enable-adaptive            Enable adaptive profile switching"
-        echo "  --adaptive-strategy STRATEGY Adaptive strategy: quality, price, or balanced (default: balanced)"
+        echo "Error: No task provided" >&2
         exit 1
     fi
-    
-    # Prompt for missing config
+
+    if [[ -z "${worker_model}" || -z "${worker_provider}" || -z "${reviewer_model}" || -z "${reviewer_provider}" ]]; then
+        if [[ ! -t 0 ]]; then
+            echo "[ERROR] Missing required worker/reviewer model or provider in non-interactive mode. Use --profile <lite|plus|pro|super|ultra> or pass --worker-model, --worker-provider, --reviewer-model, --reviewer-provider." >&2
+            exit 1
+        fi
+    fi
+
     if [[ -z "${worker_model}" ]]; then
         echo -ne "Worker model: "
-        read -r worker_model
-        if [[ -z "${worker_model}" ]]; then exit 1; fi
+        read -r worker_model || exit 1
+        [[ -z "${worker_model}" ]] && exit 1
     fi
     if [[ -z "${worker_provider}" ]]; then
         echo -ne "Worker provider (anthropic/openai/google/goose/copilot): "
-        read -r worker_provider
-        if [[ -z "${worker_provider}" ]]; then exit 1; fi
+        read -r worker_provider || exit 1
+        [[ -z "${worker_provider}" ]] && exit 1
     fi
     if [[ -z "${worker_agent}" ]]; then
         echo -ne "Worker agent (goose/claude/openai/gemini/copilot): "
-        read -r worker_agent
-        if [[ -z "${worker_agent}" ]]; then exit 1; fi
+        read -r worker_agent || exit 1
+        [[ -z "${worker_agent}" ]] && exit 1
     fi
     if [[ -z "${reviewer_model}" ]]; then
         echo -ne "Reviewer model (should be different from worker): "
-        read -r reviewer_model
-        if [[ -z "${reviewer_model}" ]]; then exit 1; fi
+        read -r reviewer_model || exit 1
+        [[ -z "${reviewer_model}" ]] && exit 1
     fi
     if [[ -z "${reviewer_provider}" ]]; then
         echo -ne "Reviewer provider (anthropic/openai/google/goose/copilot): "
-        read -r reviewer_provider
-        if [[ -z "${reviewer_provider}" ]]; then exit 1; fi
+        read -r reviewer_provider || exit 1
+        [[ -z "${reviewer_provider}" ]] && exit 1
     fi
     if [[ -z "${reviewer_agent}" ]]; then
         echo -ne "Reviewer agent (goose/claude/openai/gemini/copilot): "
-        read -r reviewer_agent
-        if [[ -z "${reviewer_agent}" ]]; then exit 1; fi
+        read -r reviewer_agent || exit 1
+        [[ -z "${reviewer_agent}" ]] && exit 1
     fi
-    
+
     if [[ "${worker_model}" == "${reviewer_model}" && "${worker_provider}" == "${reviewer_provider}" ]]; then
+        if [[ ! -t 0 ]]; then
+            echo "[ERROR] Worker and reviewer cannot be the same model/provider in non-interactive mode." >&2
+            exit 1
+        fi
         echo "Warning: Worker and reviewer are the same model/provider."
         echo -ne "Continue? [y/N]: "
-        read -r confirm
+        read -r confirm || exit 1
         if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then exit 1; fi
     fi
-    
+
     local session_id="${CLI_SESSION_ID:-ralph-$(date +%s)}"
     echo "Session: ${session_id}"
     echo "Task: ${task}"
@@ -1314,12 +1281,10 @@ run_cli() {
         echo "Max Iterations: ${max_iterations}"
     fi
     echo ""
-    
-    # Initialize session
+
     set_task "${session_id}" "${task}"
     set_config "${session_id}" "${worker_model}" "${worker_provider}" "${reviewer_model}" "${reviewer_provider}" "${max_iterations}" "true" "${worker_agent}" "${reviewer_agent}" "${work_guidelines}" "${review_guidelines}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}" "${initial_backoff}" "${throttle_delay}" "${max_retries}"
 
-    # Validate adaptive strategy and resolve start profile
     if [[ "${enable_adaptive}" == "true" ]]; then
         case "${adaptive_strategy}" in
             quality|price|balanced) ;;
@@ -1339,33 +1304,30 @@ run_cli() {
 
     local feedback=""
     local iteration=1
-    
-    # Handle infinite iterations
     local max_iter
     if [[ "${max_iterations}" -eq -1 ]]; then
         max_iter=999999999
     else
         max_iter="${max_iterations}"
     fi
-    
+
     for ((i=1; i<=max_iter; i++)); do
         iteration=$i
         echo "======================================================================"
         echo "  Iteration ${iteration} / ${max_iterations}"
         echo "======================================================================"
-        
-        # WORK PHASE
+
         echo "[WORK] WORK PHASE"
         echo "Worker: ${worker_model} (${worker_provider}) via ${worker_agent}"
-        
+
         local is_existing="false"
         if [[ -n "${CLI_SESSION_ID}" || ${iteration} -gt 1 ]]; then
             is_existing="true"
         fi
 
         local worker_output
-        worker_output=$(call_llm_worker "${task}" "${feedback}" "${iteration}" "${session_id}" "${worker_model}" "${worker_provider}" "${worker_agent}" "${work_guidelines}" "${is_existing}")
-        
+        worker_output=$(call_llm_worker "${task}" "${feedback}" "${iteration}" "${session_id}" "${worker_model}" "${worker_provider}" "${worker_agent}" "${work_guidelines}" "${is_existing}" || true)
+
         if [[ "${worker_output}" == RATE_LIMIT_EXCEEDED* ]] || [[ -z "${worker_output}" ]]; then
             if [[ "${enable_adaptive}" == "true" ]]; then
                 local new_profile
@@ -1376,7 +1338,7 @@ run_cli() {
                     current_profile="${new_profile}"
                     IFS='|' read -r worker_model worker_provider worker_agent reviewer_model reviewer_provider reviewer_agent monitor_model monitor_provider monitor_agent max_iterations initial_backoff throttle_delay max_retries <<< "${sw_values}"
                     echo "[ADAPTIVE] Retrying work phase with upgraded profile '${current_profile}'" >&2
-                    worker_output=$(call_llm_worker "${task}" "${feedback}" "${iteration}" "${session_id}" "${worker_model}" "${worker_provider}" "${worker_agent}" "${work_guidelines}" "${is_existing}")
+                    worker_output=$(call_llm_worker "${task}" "${feedback}" "${iteration}" "${session_id}" "${worker_model}" "${worker_provider}" "${worker_agent}" "${work_guidelines}" "${is_existing}" || true)
                 fi
             fi
             if [[ "${worker_output}" == RATE_LIMIT_EXCEEDED* ]] || [[ -z "${worker_output}" ]]; then
@@ -1385,31 +1347,31 @@ run_cli() {
                 exit 1
             fi
         fi
-        
-        local work_out_file="$(get_state_file "${session_id}" "work.out")"
+
+        local work_out_file
+        work_out_file="$(get_state_file "${session_id}" "work.out")"
         echo "${worker_output}" > "${work_out_file}"
 
         local parsed work summary
         parsed=$(parse_worker_output "${worker_output}" "${session_id}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}" "${work_out_file}")
         work=$(echo "${parsed}" | cut -d'|' -f1)
         summary=$(echo "${parsed}" | cut -d'|' -f2)
-        
+
         if [[ -z "${work}" || -z "${summary}" ]]; then
             echo "[WARN] WORK PHASE FAILED - Could not parse output" >&2
             exit 1
         fi
-        
+
         set_work "${session_id}" "${work}" "${summary}" "${iteration}"
         echo "Work submitted. Summary: ${summary}"
         echo ""
-        
-        # REVIEW PHASE
+
         echo "[REVIEW] REVIEW PHASE"
         echo "Reviewer: ${reviewer_model} (${reviewer_provider}) via ${reviewer_agent}"
-        
+
         local reviewer_output
-        reviewer_output=$(call_llm_reviewer "${task}" "${work}" "${summary}" "${iteration}" "${session_id}" "${reviewer_model}" "${reviewer_provider}" "${reviewer_agent}" "${review_guidelines}" "${is_existing}")
-        
+        reviewer_output=$(call_llm_reviewer "${task}" "${work}" "${summary}" "${iteration}" "${session_id}" "${reviewer_model}" "${reviewer_provider}" "${reviewer_agent}" "${review_guidelines}" "${is_existing}" || true)
+
         if [[ "${reviewer_output}" == RATE_LIMIT_EXCEEDED* ]] || [[ -z "${reviewer_output}" ]]; then
             if [[ "${enable_adaptive}" == "true" ]]; then
                 local new_profile
@@ -1420,7 +1382,7 @@ run_cli() {
                     current_profile="${new_profile}"
                     IFS='|' read -r worker_model worker_provider worker_agent reviewer_model reviewer_provider reviewer_agent monitor_model monitor_provider monitor_agent max_iterations initial_backoff throttle_delay max_retries <<< "${sw_values}"
                     echo "[ADAPTIVE] Retrying review phase with upgraded profile '${current_profile}'" >&2
-                    reviewer_output=$(call_llm_reviewer "${task}" "${work}" "${summary}" "${iteration}" "${session_id}" "${reviewer_model}" "${reviewer_provider}" "${reviewer_agent}" "${review_guidelines}" "${is_existing}")
+                    reviewer_output=$(call_llm_reviewer "${task}" "${work}" "${summary}" "${iteration}" "${session_id}" "${reviewer_model}" "${reviewer_provider}" "${reviewer_agent}" "${review_guidelines}" "${is_existing}" || true)
                 fi
             fi
             if [[ "${reviewer_output}" == RATE_LIMIT_EXCEEDED* ]] || [[ -z "${reviewer_output}" ]]; then
@@ -1429,36 +1391,37 @@ run_cli() {
                 exit 1
             fi
         fi
-        
-        local review_out_file="$(get_state_file "${session_id}" "review.out")"
+
+        local review_out_file
+        review_out_file="$(get_state_file "${session_id}" "review.out")"
         echo "${reviewer_output}" > "${review_out_file}"
 
         parsed=$(parse_reviewer_output "${reviewer_output}" "${session_id}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}" "${review_out_file}")
-        local decision=$(echo "${parsed}" | cut -d'|' -f1)
+        local decision
+        decision=$(echo "${parsed}" | cut -d'|' -f1)
         feedback=$(echo "${parsed}" | cut -d'|' -f2)
-        
+
         if [[ "${decision}" != "SHIP" && "${decision}" != "REVISE" ]]; then
             echo "[WARN] REVIEW PHASE FAILED - Invalid decision: ${decision}" >&2
             exit 1
         fi
-        
+
         set_review "${session_id}" "${decision}" "${feedback}" "${iteration}"
-        
+
         if [[ "${decision}" == "SHIP" ]]; then
             echo ""
             echo "======================================================================"
-            echo "  [EMOJI]"" SHIPPED after ${iteration} iteration(s)"
+            echo "  SHIPPED after ${iteration} iteration(s)"
             echo "======================================================================"
             echo "Session: ${session_id}"
             echo "Complete: $(date)"
             exit 0
         else
             echo ""
-            echo "[EMOJI] REVISE - Feedback for next iteration:"
+            echo "REVISE - Feedback for next iteration:"
             echo "${feedback}"
             echo ""
 
-            # Adaptive profile switching based on output quality or resource constraints
             if [[ "${enable_adaptive}" == "true" ]]; then
                 local new_profile=""
                 local trigger=""
@@ -1479,206 +1442,201 @@ run_cli() {
             fi
         fi
     done
-    
+
     echo "[WARN] Max iterations (${max_iterations}) reached" >&2
     exit 1
 }
 
 # =============================================================================
-# MCP SERVER FUNCTIONS
+# MCP SERVER TOOL HANDLERS
 # =============================================================================
-
-handle_initialize() {
+handle_ralph_initialize() {
     local id="${1}"
-    local params="${2}"
+    local params=${2:-"{}"}
     local session_id task max_iterations worker_model worker_provider worker_agent
     local reviewer_model reviewer_provider reviewer_agent monitor_model monitor_provider monitor_agent
     local cross_model_enforced work_guidelines review_guidelines initial_backoff throttle_delay max_retries
-    
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
+
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
     task=$(echo "${params}" | jq -r '.task // empty')
-    max_iterations=$(echo "${params}" | jq -r '.maxIterations // 10')
-    initial_backoff=$(echo "${params}" | jq -r '.initialBackoff // 5')
-    throttle_delay=$(echo "${params}" | jq -r '.throttleDelay // 0')
-    max_retries=$(echo "${params}" | jq -r '.maxRetries // 3')
-    worker_model=$(echo "${params}" | jq -r '.workerModel // empty')
-    worker_provider=$(echo "${params}" | jq -r '.workerProvider // empty')
-    worker_agent=$(echo "${params}" | jq -r '.workerAgent // "goose"')
-    reviewer_model=$(echo "${params}" | jq -r '.reviewerModel // empty')
-    reviewer_provider=$(echo "${params}" | jq -r '.reviewerProvider // empty')
-    reviewer_agent=$(echo "${params}" | jq -r '.reviewerAgent // "goose"')
-    monitor_model=$(echo "${params}" | jq -r --arg m "${MONITOR_MODEL:-}" '.monitorModel // $m // empty')
-    monitor_provider=$(echo "${params}" | jq -r --arg p "${MONITOR_PROVIDER:-}" '.monitorProvider // $p // empty')
-    monitor_agent=$(echo "${params}" | jq -r --arg a "${MONITOR_AGENT:-goose}" '.monitorAgent // $a // "goose"')
-    cross_model_enforced=$(echo "${params}" | jq -r '.crossModelReviewEnforced // true')
-    work_guidelines=$(echo "${params}" | jq -r '.workGuidelines // empty')
-    review_guidelines=$(echo "${params}" | jq -r '.reviewGuidelines // empty')
-    
+    max_iterations=$(echo "${params}" | jq -r '.maxIterations // .max_iterations // 10')
+    initial_backoff=$(echo "${params}" | jq -r '.initialBackoff // .initial_backoff // 5')
+    throttle_delay=$(echo "${params}" | jq -r '.throttleDelay // .throttle_delay // 0')
+    max_retries=$(echo "${params}" | jq -r '.maxRetries // .max_retries // 3')
+    worker_model=$(echo "${params}" | jq -r '.workerModel // .worker_model // empty')
+    worker_provider=$(echo "${params}" | jq -r '.workerProvider // .worker_provider // empty')
+    worker_agent=$(echo "${params}" | jq -r '.workerAgent // .worker_agent // "goose"')
+    reviewer_model=$(echo "${params}" | jq -r '.reviewerModel // .reviewer_model // empty')
+    reviewer_provider=$(echo "${params}" | jq -r '.reviewerProvider // .reviewer_provider // empty')
+    reviewer_agent=$(echo "${params}" | jq -r '.reviewerAgent // .reviewer_agent // "goose"')
+    monitor_model=$(echo "${params}" | jq -r --arg m "${MONITOR_MODEL:-}" '.monitorModel // .monitor_model // $m // empty')
+    monitor_provider=$(echo "${params}" | jq -r --arg p "${MONITOR_PROVIDER:-}" '.monitorProvider // .monitor_provider // $p // empty')
+    monitor_agent=$(echo "${params}" | jq -r --arg a "${MONITOR_AGENT:-goose}" '.monitorAgent // .monitor_agent // $a // "goose"')
+    cross_model_enforced=$(echo "${params}" | jq -r 'if (.crossModelReviewEnforced == false or .cross_model_review_enforced == false) then "false" else "true" end')
+    work_guidelines=$(echo "${params}" | jq -r '.workGuidelines // .work_guidelines // empty')
+    review_guidelines=$(echo "${params}" | jq -r '.reviewGuidelines // .review_guidelines // empty')
+
     if [[ -z "${task}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"Task is required"}')
+        json_response "${id}" "" "$(mcp_error -32602 "Task is required")"
         return
     fi
-    
+
     set_task "${session_id}" "${task}"
     set_config "${session_id}" "${worker_model}" "${worker_provider}" "${reviewer_model}" "${reviewer_provider}" "${max_iterations}" "${cross_model_enforced}" "${worker_agent}" "${reviewer_agent}" "${work_guidelines}" "${review_guidelines}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}" "${initial_backoff}" "${throttle_delay}" "${max_retries}"
-    
-    local validation
+
+    local validation status result
     validation=$(validate_cross_model "${session_id}")
-    local status
     status=$(get_status "${session_id}" "${max_iterations}")
-    
-    local result
+
     result=$(jq -n \
         --arg msg "Ralph Loop initialized for session \"${session_id}\"" \
         --argjson status "${status}" \
         --argjson validation "${validation}" \
         --argjson enforced "${cross_model_enforced}" \
         '{success: true, message: $msg, status: $status, crossModelReview: {enforced: $enforced, valid: $validation.valid, warning: $validation.warning}}')
-    
-    echo $(json_response "${id}" "${result}")
+
+    json_response "${id}" "${result}"
 }
 
 handle_get_task() {
     local id="${1}"
-    local params="${2}"
+    local params=${2:-"{}"}
     local session_id
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
-    
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
+
     local task
     task=$(get_task "${session_id}")
-    
+
     if [[ -z "${task}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"No task found. Initialize the session first with ralph_loop_initialize."}')
+        json_response "${id}" "" "$(mcp_error -32602 "No task found. Initialize the session first with ralph_loop_initialize.")"
         return
     fi
-    
+
     local result
     result=$(echo "${task}" | jq '{success: true, task: .task, createdAt: .createdAt}')
-    echo $(json_response "${id}" "${result}")
+    json_response "${id}" "${result}"
 }
 
 handle_submit_work() {
     local id="${1}"
-    local params="${2}"
+    local params=${2:-"{}"}
     local session_id work summary iteration
-    
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
+
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
     work=$(echo "${params}" | jq -r '.work // empty')
     summary=$(echo "${params}" | jq -r '.summary // empty')
     iteration=$(echo "${params}" | jq -r '.iteration // empty')
-    
+
     if [[ -z "${work}" || -z "${summary}" || -z "${iteration}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"work, summary, and iteration are required"}')
+        json_response "${id}" "" "$(mcp_error -32602 "work, summary, and iteration are required")"
         return
     fi
-    
+
     set_work "${session_id}" "${work}" "${summary}" "${iteration}"
-    local status
+    local status result
     status=$(get_status "${session_id}")
-    
-    local result
+
     result=$(jq -n \
         --arg msg "Work submitted for iteration ${iteration}" \
         --argjson status "${status}" \
         '{success: true, message: $msg, status: $status}')
-    
-    echo $(json_response "${id}" "${result}")
+
+    json_response "${id}" "${result}"
 }
 
 handle_get_work() {
     local id="${1}"
-    local params="${2}"
+    local params=${2:-"{}"}
     local session_id
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
-    
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
+
     local work
     work=$(get_work "${session_id}")
-    
+
     if [[ -z "${work}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"No work submitted yet. Worker must submit work first."}')
+        json_response "${id}" "" "$(mcp_error -32602 "No work submitted yet. Worker must submit work first.")"
         return
     fi
-    
+
     local result
     result=$(echo "${work}" | jq '{success: true, work: .work, summary: .summary, iteration: .iteration, submittedAt: .submittedAt}')
-    echo $(json_response "${id}" "${result}")
+    json_response "${id}" "${result}"
 }
 
 handle_submit_review() {
     local id="${1}"
-    local params="${2}"
+    local params=${2:-"{}"}
     local session_id decision feedback iteration
-    
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
+
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
     decision=$(echo "${params}" | jq -r '.decision // empty')
     feedback=$(echo "${params}" | jq -r '.feedback // empty')
     iteration=$(echo "${params}" | jq -r '.iteration // empty')
-    
+
     if [[ -z "${decision}" || -z "${iteration}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"decision and iteration are required"}')
+        json_response "${id}" "" "$(mcp_error -32602 "decision and iteration are required")"
         return
     fi
-    
+
     if [[ "${decision}" == "REVISE" && -z "${feedback}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"Feedback is required when decision is REVISE"}')
+        json_response "${id}" "" "$(mcp_error -32602 "Feedback is required when decision is REVISE")"
         return
     fi
-    
+
     set_review "${session_id}" "${decision}" "${feedback}" "${iteration}"
-    local status
+    local status result
     status=$(get_status "${session_id}")
-    
-    local result
+
     result=$(jq -n \
         --arg msg "Review submitted: ${decision}" \
         --arg decision "${decision}" \
         --arg feedback "${feedback}" \
         --argjson status "${status}" \
         '{success: true, message: $msg, decision: $decision, feedback: $feedback, status: $status}')
-    
-    echo $(json_response "${id}" "${result}")
+
+    json_response "${id}" "${result}"
 }
 
 handle_get_feedback() {
     local id="${1}"
-    local params="${2}"
+    local params=${2:-"{}"}
     local session_id
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
-    
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
+
     local review_result feedback status
     review_result=$(get_review_result "${session_id}")
     feedback=$(get_feedback "${session_id}")
     status=$(get_status "${session_id}")
-    
+
     if [[ -z "${review_result}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"No review completed yet. Reviewer must submit review first."}')
+        json_response "${id}" "" "$(mcp_error -32602 "No review completed yet. Reviewer must submit review first.")"
         return
     fi
-    
+
     if [[ "${review_result}" == "SHIP" ]]; then
         local result
         result=$(jq -n \
             --argjson status "${status}" \
             '{success: true, shipped: true, message: "Work approved! SHIPPED.", status: $status}')
-        echo $(json_response "${id}" "${result}")
+        json_response "${id}" "${result}"
         return
     fi
-    
+
     local result
     result=$(jq -n \
         --arg feedback "${feedback}" \
         --argjson iteration "$(echo "${status}" | jq -r '.currentIteration')" \
         --argjson status "${status}" \
         '{success: true, shipped: false, feedback: $feedback, iteration: $iteration, status: $status}')
-    echo $(json_response "${id}" "${result}")
+    json_response "${id}" "${result}"
 }
 
 handle_get_status() {
     local id="${1}"
-    local params="${2}"
+    local params=${2:-"{}"}
     local session_id
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
-    
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
+
     local config max_iterations
     config=$(get_config "${session_id}")
     if [[ -n "${config}" ]]; then
@@ -1686,119 +1644,117 @@ handle_get_status() {
     else
         max_iterations=10
     fi
-    
-    local status
+
+    local status result
     status=$(get_status "${session_id}" "${max_iterations}")
-    
-    local result
     result=$(echo "${status}" | jq '{success: true} + .')
-    echo $(json_response "${id}" "${result}")
+    json_response "${id}" "${result}"
 }
 
 handle_get_config() {
     local id="${1}"
-    local params="${2}"
+    local params=${2:-"{}"}
     local session_id
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
-    
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
+
     local config
     config=$(get_config "${session_id}")
-    
+
     if [[ -z "${config}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"No configuration found. Initialize the session first with ralph_loop_initialize."}')
+        json_response "${id}" "" "$(mcp_error -32602 "No configuration found. Initialize the session first with ralph_loop_initialize.")"
         return
     fi
-    
-    local validation
+
+    local validation result
     validation=$(validate_cross_model "${session_id}")
-    
-    local result
+
     result=$(jq -n \
         --argjson config "${config}" \
         --argjson validation "${validation}" \
         '{success: true, config: {workerModel: $config.workerModel, workerProvider: $config.workerProvider, workerAgent: $config.workerAgent, reviewerModel: $config.reviewerModel, reviewerProvider: $config.reviewerProvider, reviewerAgent: $config.reviewerAgent, monitorModel: $config.monitorModel, monitorProvider: $config.monitorProvider, monitorAgent: $config.monitorAgent, maxIterations: $config.maxIterations, crossModelReviewEnforced: $config.crossModelReviewEnforced, workGuidelines: $config.workGuidelines, reviewGuidelines: $config.reviewGuidelines, configuredAt: $config.configuredAt}, crossModelReview: {enforced: $config.crossModelReviewEnforced, valid: $validation.valid, warning: $validation.warning}}')
-    
-    echo $(json_response "${id}" "${result}")
+
+    json_response "${id}" "${result}"
 }
 
 handle_reset() {
     local id="${1}"
-    local params="${2}"
+    local params=${2:-"{}"}
     local session_id
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
-    
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
+
     reset_session "${session_id}"
-    
+
     local result
     result=$(jq -n --arg msg "Session \"${session_id}\" has been reset" '{success: true, message: $msg}')
-    echo $(json_response "${id}" "${result}")
+    json_response "${id}" "${result}"
 }
 
 handle_block() {
     local id="${1}"
-    local params="${2}"
+    local params=${2:-"{}"}
     local session_id reason
-    
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
+
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
     reason=$(echo "${params}" | jq -r '.reason // empty')
-    
+
     if [[ -z "${reason}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"Reason is required for blocking"}')
+        json_response "${id}" "" "$(mcp_error -32602 "Reason is required for blocking")"
         return
     fi
-    
+
     block_iteration "${session_id}" "${reason}"
-    
+
     local result
     result=$(jq -n --arg msg "Iteration blocked" --arg reason "${reason}" '{success: true, message: $msg, reason: $reason}')
-    echo $(json_response "${id}" "${result}")
+    json_response "${id}" "${result}"
 }
 
 handle_run() {
     local id="${1}"
-    local params="${2}"
-    local session_id task max_iterations worker_model worker_provider worker_agent reviewer_model reviewer_provider reviewer_agent cross_model_enforced work_guidelines review_guidelines monitor_model monitor_provider monitor_agent enable_adaptive adaptive_strategy current_profile initial_backoff throttle_delay max_retries
-    
-    session_id=$(echo "${params}" | jq -r '.sessionId // "default"')
+    local params=${2:-"{}"}
+    local session_id task max_iterations worker_model worker_provider worker_agent reviewer_model reviewer_provider reviewer_agent
+    local cross_model_enforced work_guidelines review_guidelines monitor_model monitor_provider monitor_agent
+    local enable_adaptive adaptive_strategy current_profile initial_backoff throttle_delay max_retries
+
+    session_id=$(echo "${params}" | jq -r '.sessionId // .session_id // "default"')
     task=$(echo "${params}" | jq -r '.task // empty')
-    max_iterations=$(echo "${params}" | jq -r '.maxIterations // 10')
-    initial_backoff=$(echo "${params}" | jq -r '.initialBackoff // 5')
-    throttle_delay=$(echo "${params}" | jq -r '.throttleDelay // 0')
-    max_retries=$(echo "${params}" | jq -r '.maxRetries // 3')
-    enable_adaptive=$(echo "${params}" | jq -r '.enableAdaptive // false')
-    adaptive_strategy=$(echo "${params}" | jq -r '.adaptiveStrategy // "balanced"')
+    max_iterations=$(echo "${params}" | jq -r '.maxIterations // .max_iterations // 10')
+    initial_backoff=$(echo "${params}" | jq -r '.initialBackoff // .initial_backoff // 5')
+    throttle_delay=$(echo "${params}" | jq -r '.throttleDelay // .throttle_delay // 0')
+    max_retries=$(echo "${params}" | jq -r '.maxRetries // .max_retries // 3')
+    enable_adaptive=$(echo "${params}" | jq -r '.enableAdaptive // .enable_adaptive // false')
+    adaptive_strategy=$(echo "${params}" | jq -r '.adaptiveStrategy // .adaptive_strategy // "balanced"')
     current_profile=$(echo "${params}" | jq -r '.profile // empty')
-    worker_model=$(echo "${params}" | jq -r '.workerModel // empty')
-    worker_provider=$(echo "${params}" | jq -r '.workerProvider // empty')
-    worker_agent=$(echo "${params}" | jq -r '.workerAgent // "goose"')
+    worker_model=$(echo "${params}" | jq -r '.workerModel // .worker_model // empty')
+    worker_provider=$(echo "${params}" | jq -r '.workerProvider // .worker_provider // empty')
+    worker_agent=$(echo "${params}" | jq -r '.workerAgent // .worker_agent // "goose"')
     reviewer_model=$(echo "${params}" | jq -r '.reviewerModel // empty')
     reviewer_provider=$(echo "${params}" | jq -r '.reviewerProvider // empty')
     reviewer_agent=$(echo "${params}" | jq -r '.reviewerAgent // "goose"')
-    cross_model_enforced=$(echo "${params}" | jq -r '.crossModelReviewEnforced // true')
+    cross_model_enforced=$(echo "${params}" | jq -r 'if .crossModelReviewEnforced == false then "false" else "true" end')
     work_guidelines=$(echo "${params}" | jq -r '.workGuidelines // empty')
     review_guidelines=$(echo "${params}" | jq -r '.reviewGuidelines // empty')
     monitor_model=$(echo "${params}" | jq -r --arg m "${MONITOR_MODEL:-}" '.monitorModel // $m // empty')
     monitor_provider=$(echo "${params}" | jq -r --arg p "${MONITOR_PROVIDER:-}" '.monitorProvider // $p // empty')
     monitor_agent=$(echo "${params}" | jq -r --arg a "${MONITOR_AGENT:-goose}" '.monitorAgent // $a // "goose"')
-    
+
     if [[ -z "${task}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"Task is required"}')
+        json_response "${id}" "" "$(mcp_error -32602 "Task is required")"
         return
     fi
-    
+
     if [[ -z "${worker_model}" || -z "${worker_provider}" || -z "${reviewer_model}" || -z "${reviewer_provider}" ]]; then
-        echo $(json_response "${id}" "" '{"code":-32602,"message":"workerModel, workerProvider, reviewerModel, and reviewerProvider are required"}')
+        json_response "${id}" "" "$(mcp_error -32602 "workerModel, workerProvider, reviewerModel, and reviewerProvider are required")"
         return
     fi
-    
+
     set_task "${session_id}" "${task}"
     set_config "${session_id}" "${worker_model}" "${worker_provider}" "${reviewer_model}" "${reviewer_provider}" "${max_iterations}" "${cross_model_enforced}" "${worker_agent}" "${reviewer_agent}" "${work_guidelines}" "${review_guidelines}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}" "${initial_backoff}" "${throttle_delay}" "${max_retries}"
 
-    # Validate adaptive strategy and resolve start profile
     if [[ "${enable_adaptive}" == "true" ]]; then
         case "${adaptive_strategy}" in
             quality|price|balanced) ;;
-            *) echo "[WARNING] Unknown adaptive strategy '${adaptive_strategy}'; falling back to 'balanced'." >&2; adaptive_strategy="balanced" ;;
+            *) adaptive_strategy="balanced" ;;
         esac
         if [[ -z "${current_profile}" ]]; then
             case "${adaptive_strategy}" in
@@ -1806,15 +1762,12 @@ handle_run() {
                 price)   current_profile="lite" ;;
                 *)       current_profile="pro" ;;
             esac
-            echo "[ADAPTIVE] Strategy '${adaptive_strategy}' (start profile '${current_profile}')" >&2
-        else
-            echo "[ADAPTIVE] Strategy '${adaptive_strategy}' (starting from '${current_profile}')" >&2
         fi
     fi
 
     local feedback=""
     local result
-    
+
     for ((i=1; i<=max_iterations; i++)); do
         local is_existing="false"
         if [[ ${i} -gt 1 ]]; then
@@ -1822,8 +1775,8 @@ handle_run() {
         fi
 
         local worker_output
-        worker_output=$(call_llm_worker "${task}" "${feedback}" "${i}" "${session_id}" "${worker_model}" "${worker_provider}" "${worker_agent}" "${work_guidelines}" "${is_existing}")
-        
+        worker_output=$(call_llm_worker "${task}" "${feedback}" "${i}" "${session_id}" "${worker_model}" "${worker_provider}" "${worker_agent}" "${work_guidelines}" "${is_existing}" || true)
+
         if [[ "${worker_output}" == RATE_LIMIT_EXCEEDED* ]] || [[ -z "${worker_output}" ]]; then
             if [[ "${enable_adaptive}" == "true" ]]; then
                 local new_profile
@@ -1833,34 +1786,35 @@ handle_run() {
                     sw_values=$(switch_adaptive_profile "${session_id}" "${new_profile}" "${current_profile}")
                     current_profile="${new_profile}"
                     IFS='|' read -r worker_model worker_provider worker_agent reviewer_model reviewer_provider reviewer_agent monitor_model monitor_provider monitor_agent max_iterations initial_backoff throttle_delay max_retries <<< "${sw_values}"
-                    worker_output=$(call_llm_worker "${task}" "${feedback}" "${i}" "${session_id}" "${worker_model}" "${worker_provider}" "${worker_agent}" "${work_guidelines}" "${is_existing}")
+                    worker_output=$(call_llm_worker "${task}" "${feedback}" "${i}" "${session_id}" "${worker_model}" "${worker_provider}" "${worker_agent}" "${work_guidelines}" "${is_existing}" || true)
                 fi
             fi
             if [[ "${worker_output}" == RATE_LIMIT_EXCEEDED* ]] || [[ -z "${worker_output}" ]]; then
                 block_iteration "${session_id}" "WORK PHASE FAILED - Rate limit or quota error from worker LLM"
-                echo $(json_response "${id}" "" '{"code":-32603,"message":"WORK PHASE FAILED - Rate limit, quota error, or no output from worker"}')
+                json_response "${id}" "" "$(mcp_error -32603 "WORK PHASE FAILED - Rate limit, quota error, or no output from worker")"
                 return
             fi
         fi
-        
-        local work_out_file="$(get_state_file "${session_id}" "work.out")"
+
+        local work_out_file
+        work_out_file="$(get_state_file "${session_id}" "work.out")"
         echo "${worker_output}" > "${work_out_file}"
 
         local parsed work summary
         parsed=$(parse_worker_output "${worker_output}" "${session_id}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}" "${work_out_file}")
         work=$(echo "${parsed}" | cut -d'|' -f1)
         summary=$(echo "${parsed}" | cut -d'|' -f2)
-        
+
         if [[ -z "${work}" || -z "${summary}" ]]; then
-            echo $(json_response "${id}" "" '{"code":-32603,"message":"WORK PHASE FAILED - Could not parse output"}')
+            json_response "${id}" "" "$(mcp_error -32603 "WORK PHASE FAILED - Could not parse output")"
             return
         fi
-        
+
         set_work "${session_id}" "${work}" "${summary}" "${i}"
-        
+
         local reviewer_output
-        reviewer_output=$(call_llm_reviewer "${task}" "${work}" "${summary}" "${i}" "${session_id}" "${reviewer_model}" "${reviewer_provider}" "${reviewer_agent}" "${review_guidelines}" "${is_existing}")
-        
+        reviewer_output=$(call_llm_reviewer "${task}" "${work}" "${summary}" "${i}" "${session_id}" "${reviewer_model}" "${reviewer_provider}" "${reviewer_agent}" "${review_guidelines}" "${is_existing}" || true)
+
         if [[ "${reviewer_output}" == RATE_LIMIT_EXCEEDED* ]] || [[ -z "${reviewer_output}" ]]; then
             if [[ "${enable_adaptive}" == "true" ]]; then
                 local new_profile
@@ -1870,35 +1824,37 @@ handle_run() {
                     sw_values=$(switch_adaptive_profile "${session_id}" "${new_profile}" "${current_profile}")
                     current_profile="${new_profile}"
                     IFS='|' read -r worker_model worker_provider worker_agent reviewer_model reviewer_provider reviewer_agent monitor_model monitor_provider monitor_agent max_iterations initial_backoff throttle_delay max_retries <<< "${sw_values}"
-                    reviewer_output=$(call_llm_reviewer "${task}" "${work}" "${summary}" "${i}" "${session_id}" "${reviewer_model}" "${reviewer_provider}" "${reviewer_agent}" "${review_guidelines}" "${is_existing}")
+                    reviewer_output=$(call_llm_reviewer "${task}" "${work}" "${summary}" "${i}" "${session_id}" "${reviewer_model}" "${reviewer_provider}" "${reviewer_agent}" "${review_guidelines}" "${is_existing}" || true)
                 fi
             fi
             if [[ "${reviewer_output}" == RATE_LIMIT_EXCEEDED* ]] || [[ -z "${reviewer_output}" ]]; then
                 block_iteration "${session_id}" "REVIEW PHASE FAILED - Rate limit or quota error from reviewer LLM"
-                echo $(json_response "${id}" "" '{"code":-32603,"message":"REVIEW PHASE FAILED - Rate limit, quota error, or no output from reviewer"}')
+                json_response "${id}" "" "$(mcp_error -32603 "REVIEW PHASE FAILED - Rate limit, quota error, or no output from reviewer")"
                 return
             fi
         fi
-        
-        local review_out_file="$(get_state_file "${session_id}" "review.out")"
+
+        local review_out_file
+        review_out_file="$(get_state_file "${session_id}" "review.out")"
         echo "${reviewer_output}" > "${review_out_file}"
 
         parsed=$(parse_reviewer_output "${reviewer_output}" "${session_id}" "${monitor_model}" "${monitor_provider}" "${monitor_agent}" "${review_out_file}")
-        local decision=$(echo "${parsed}" | cut -d'|' -f1)
+        local decision
+        decision=$(echo "${parsed}" | cut -d'|' -f1)
         feedback=$(echo "${parsed}" | cut -d'|' -f2)
-        
+
         if [[ "${decision}" != "SHIP" && "${decision}" != "REVISE" ]]; then
-            echo $(json_response "${id}" "" '{"code":-32603,"message":"REVIEW PHASE FAILED - Invalid decision: '"${decision}"'"}')
+            json_response "${id}" "" "$(mcp_error -32603 "REVIEW PHASE FAILED - Invalid decision: ${decision}")"
             return
         fi
-        
+
         set_review "${session_id}" "${decision}" "${feedback}" "${i}"
-        
+
         if [[ "${decision}" == "SHIP" ]]; then
             local status
             status=$(get_status "${session_id}" "${max_iterations}")
-            result=$(jq -n --arg msg "SHIPPED after ${i} iteration(s)" --argjson status "${status}" '{success: true, message: $msg, status: $status, shipped: true, iterations: $i}')
-            echo $(json_response "${id}" "${result}")
+            result=$(jq -n --arg msg "SHIPPED after ${i} iteration(s)" --argjson status "${status}" --argjson iter "${i}" '{success: true, message: $msg, status: $status, shipped: true, iterations: $iter}')
+            json_response "${id}" "${result}"
             return
         fi
 
@@ -1921,14 +1877,15 @@ handle_run() {
             fi
         fi
     done
-    
+
     local status
     status=$(get_status "${session_id}" "${max_iterations}")
     result=$(jq -n --arg msg "Max iterations (${max_iterations}) reached" --argjson status "${status}" '{success: false, message: $msg, status: $status, shipped: false}')
-    echo $(json_response "${id}" "${result}")
+    json_response "${id}" "${result}"
 }
 
-handle_list_tools() {
+# Override SDK handle_tools_list to expose the 11 Ralph Loop MCP tools
+handle_tools_list() {
     local id="${1}"
     local tools='[
   {
@@ -2084,85 +2041,115 @@ handle_list_tools() {
     }
   }
 ]'
-    local result=$(jq -n --argjson tools "${tools}" '{tools: $tools}')
-    echo $(json_response "${id}" "${result}")
+    local result
+    result=$(jq -cn --argjson tools "${tools}" '{tools: $tools}')
+    json_response "${id}" "${result}"
+}
+
+# Dispatch a named tool invocation (supports both ralph_loop_* and ralf_loop_* aliases)
+dispatch_ralph_tool() {
+    local id="${1}"
+    local tool_name="${2}"
+    local tool_args=${3:-"{}"}
+
+    case "${tool_name}" in
+        ralph_loop_initialize|ralf_loop_initialize)
+            handle_ralph_initialize "${id}" "${tool_args}"
+            ;;
+        ralph_loop_get_task|ralf_loop_get_task)
+            handle_get_task "${id}" "${tool_args}"
+            ;;
+        ralph_loop_submit_work|ralf_loop_submit_work)
+            handle_submit_work "${id}" "${tool_args}"
+            ;;
+        ralph_loop_get_work|ralf_loop_get_work)
+            handle_get_work "${id}" "${tool_args}"
+            ;;
+        ralph_loop_submit_review|ralf_loop_submit_review)
+            handle_submit_review "${id}" "${tool_args}"
+            ;;
+        ralph_loop_get_feedback|ralf_loop_get_feedback)
+            handle_get_feedback "${id}" "${tool_args}"
+            ;;
+        ralph_loop_get_status|ralf_loop_get_status)
+            handle_get_status "${id}" "${tool_args}"
+            ;;
+        ralph_loop_get_config|ralf_loop_get_config)
+            handle_get_config "${id}" "${tool_args}"
+            ;;
+        ralph_loop_reset|ralf_loop_reset)
+            handle_reset "${id}" "${tool_args}"
+            ;;
+        ralph_loop_block|ralf_loop_block)
+            handle_block "${id}" "${tool_args}"
+            ;;
+        ralph_loop_run|ralf_loop_run)
+            handle_run "${id}" "${tool_args}"
+            ;;
+        *)
+            json_response "${id}" "" "$(mcp_error -32601 "Unknown tool: ${tool_name}")"
+            ;;
+    esac
+}
+
+# Override SDK handle_tools_call
+handle_tools_call() {
+    local id="${1}"
+    local params=${2:-"{}"}
+    local tool_name tool_args
+    tool_name=$(printf '%s' "${params}" | jq -r '.name // empty' 2>/dev/null || echo "")
+    tool_args=$(printf '%s' "${params}" | jq -c '.arguments // {}' 2>/dev/null || echo "{}")
+    dispatch_ralph_tool "${id}" "${tool_name}" "${tool_args}"
+}
+
+# Support direct JSON-RPC method calls for tool names as well
+mcp_custom_method_handler() {
+    local id="${1}"
+    local method="${2}"
+    local params=${3:-"{}"}
+    local is_notification="${4:-false}"
+
+    case "${method}" in
+        ralph_loop_*|ralf_loop_*)
+            dispatch_ralph_tool "${id}" "${method}" "${params}"
+            ;;
+        *)
+            if [[ "${is_notification}" != "true" && "${id}" != "null" && -n "${id}" ]]; then
+                json_response "${id}" "" "$(mcp_error -32601 "Method not found: ${method}")"
+            fi
+            ;;
+    esac
 }
 
 # =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
-
-if [[ $# -gt 0 ]]; then
-    # CLI MODE: Run orchestration with task argument
-    run_cli "$@"
-else
-    # MCP SERVER MODE: Handle JSON-RPC requests
-    echo '{"jsonrpc":"2.0","id":null,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"ralph-loop-runner","version":"1.0.0"}}}'
-    
-    while IFS= read -r line; do
-        [[ -z "${line}" ]] && continue
-        
-        if ! echo "${line}" | jq empty >/dev/null 2>&1; then
-            echo $(json_response "null" "" '{"code":-32700,"message":"Parse error"}')
-            continue
-        fi
-        
-        method=$(echo "${line}" | jq -r '.method // empty')
-        id=$(echo "${line}" | jq -r '.id // null')
-        params=$(echo "${line}" | jq -c '.params // {}')
-        
-        case "${method}" in
-            "initialize")
-                echo '{"jsonrpc":"2.0","id":'$id',"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"ralph-loop-runner","version":"1.0.0"}}}'
-                ;;
-            "tools/list")
-                handle_list_tools "${id}"
-                ;;
-            "tools/call")
-                tool_name=$(echo "${params}" | jq -r '.name // empty')
-                tool_args=$(echo "${params}" | jq -c '.arguments // {}')
-                case "${tool_name}" in
-                    "ralph_loop_initialize")
-                        handle_initialize "${id}" "${tool_args}"
-                        ;;
-                    "ralph_loop_get_task")
-                        handle_get_task "${id}" "${tool_args}"
-                        ;;
-                    "ralph_loop_submit_work")
-                        handle_submit_work "${id}" "${tool_args}"
-                        ;;
-                    "ralph_loop_get_work")
-                        handle_get_work "${id}" "${tool_args}"
-                        ;;
-                    "ralph_loop_submit_review")
-                        handle_submit_review "${id}" "${tool_args}"
-                        ;;
-                    "ralph_loop_get_feedback")
-                        handle_get_feedback "${id}" "${tool_args}"
-                        ;;
-                    "ralph_loop_get_status")
-                        handle_get_status "${id}" "${tool_args}"
-                        ;;
-                    "ralph_loop_get_config")
-                        handle_get_config "${id}" "${tool_args}"
-                        ;;
-                    "ralph_loop_reset")
-                        handle_reset "${id}" "${tool_args}"
-                        ;;
-                    "ralph_loop_block")
-                        handle_block "${id}" "${tool_args}"
-                        ;;
-                    "ralph_loop_run")
-                        handle_run "${id}" "${tool_args}"
-                        ;;
-                    *)
-                        echo $(json_response "${id}" "" '{"code":-32601,"message":"Unknown tool: '"${tool_name}"'"}')
-                        ;;
-                esac
-                ;;
-            *)
-                echo $(json_response "${id}" "" '{"code":-32601,"message":"Unknown method: '"${method}"'"}')
-                ;;
-        esac
-    done
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    if [[ $# -eq 0 ]]; then
+        mcp_main
+        exit 0
+    elif [[ "${1}" == "--stdio" ]]; then
+        export MCP_TRANSPORT="stdio"
+        mcp_main
+        exit 0
+    elif [[ "${1}" == "--http-worker" ]]; then
+        handle_http_request_stream
+        exit 0
+    elif [[ "${1}" == "--http" || "${1}" == "--streamable-http" ]]; then
+        export MCP_TRANSPORT="streamable-http"
+        shift
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --port) shift; export MCP_HTTP_PORT="${1:-8080}"; export MCP_HTTP_LISTEN="true" ;;
+                --host) shift; export MCP_HTTP_HOST="${1:-127.0.0.1}"; export MCP_HTTP_LISTEN="true" ;;
+                --listen) export MCP_HTTP_LISTEN="true" ;;
+            esac
+            shift
+        done
+        mcp_main
+        exit 0
+    else
+        run_cli "$@"
+        exit $?
+    fi
 fi

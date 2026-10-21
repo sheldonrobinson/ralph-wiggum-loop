@@ -1,0 +1,15 @@
+{
+  "description": "Ralph Wiggum Loop stop hook for self-referential and worker/reviewer iterative loops",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${PLUGIN_ROOT}/bin/script-runner.sh stop-hook"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,10 +1,67 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
   "mcpServers": {
-    "ralph-loop": {
+    "ralph-wiggum-loop": {
       "type": "stdio",
-      "command": "./bin/ralph-loop-runner.sh",
-      "args": []
+      "command": "./bin/script-runner",
+      "args": ["ralph-wiggum-loop", "--stdio"],
+      "cwd": "${PLUGIN_ROOT}",
+      "env": {
+        "RALPH_STATE_BASE": "${PLUGIN_DATA}/state",
+        "RALPH_RECIPE_DIR": "${PLUGIN_ROOT}/recipes"
+      }
+    },
+    "ralph-wiggum-loop-sh": {
+      "type": "stdio",
+      "command": "./bin/script-runner.sh",
+      "args": ["--use-sh", "ralph-wiggum-loop", "--stdio"],
+      "cwd": "${PLUGIN_ROOT}",
+      "env": {
+        "RALPH_STATE_BASE": "${PLUGIN_DATA}/state",
+        "RALPH_RECIPE_DIR": "${PLUGIN_ROOT}/recipes"
+      }
+    },
+    "ralph-wiggum-loop-pwsh": {
+      "type": "stdio",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${PLUGIN_ROOT}/bin/script-runner.ps1",
+        "--use-pwsh",
+        "ralph-wiggum-loop",
+        "--stdio"
+      ],
+      "cwd": "${PLUGIN_ROOT}",
+      "env": {
+        "RALPH_STATE_BASE": "${PLUGIN_DATA}/state",
+        "RALPH_RECIPE_DIR": "${PLUGIN_ROOT}/recipes"
+      }
+    },
+    "ralph-wiggum-loop-powershell": {
+      "type": "stdio",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${PLUGIN_ROOT}/bin/script-runner.ps1",
+        "--use-pwsh",
+        "ralph-wiggum-loop",
+        "--stdio"
+      ],
+      "cwd": "${PLUGIN_ROOT}",
+      "env": {
+        "RALPH_STATE_BASE": "${PLUGIN_DATA}/state",
+        "RALPH_RECIPE_DIR": "${PLUGIN_ROOT}/recipes"
+      }
+    },
+    "ralph-wiggum-loop-http": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:8080/mcp"
     }
   }
 }

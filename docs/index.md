@@ -51,13 +51,13 @@ A two-phase iterative workflow where a **worker** model does the work and a **re
 # Clone and install
 git clone https://github.com/sheldonrobinson/ralph-wiggum-loop
 cd ralph-wiggum-loop
-chmod +x bin/ralph-loop-runner.sh
+chmod +x bin/ralph-wiggum-loop.sh
 
 # Run a task
-./bin/ralph-loop-runner.sh "Implement user authentication with JWT tokens" --profile pro
+./bin/ralph-wiggum-loop.sh "Implement user authentication with JWT tokens" --profile pro
 
 # Or run as MCP server (no args)
-./bin/ralph-loop-runner.sh
+./bin/ralph-wiggum-loop.sh
 ```
 
 ## Documentation
