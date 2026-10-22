@@ -1,11 +1,5 @@
 title: ralph-wiggum-loop
-description: Multi-model iterative development agent plugin — Ralph Loop with cross-model worker/reviewer architecture and SHIP/REVISE decision engine.
-show_downloads: true
-remote_theme: pages-themes/minimal@v0.2.0
-plugins:
-  - jekyll-include-cache
-title: ralph-wiggum-loop
-description: Multi-model iterative development agent plugin — Ralph Loop with cross-model worker/reviewer architecture and SHIP/REVISE decision engine.
+description: Multi-model iterative development agent plugin — Ralph Loop with cross-model worker/reviewer architecture, Agent Skills, Stop hooks, and SHIP/REVISE decision engine.
 show_downloads: true
 remote_theme: pages-themes/minimal@v0.2.0
 plugins:
