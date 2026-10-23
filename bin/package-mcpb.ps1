@@ -5,7 +5,7 @@
     renders platform-specific mcp.json from packaging/mcpb/mcp.template.json,
     and updates server.json with SHA-256 integrity hashes for the Official MCP Registry.
 #>
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(Mandatory = $false)]
     [string]$Version = "",
@@ -17,11 +17,26 @@ param(
     [string]$RepoName = "ralph-wiggum-loop",
 
     [Parameter(Mandatory = $false)]
-    [string]$OutDir = ""
+    [string]$OutDir = "",
+
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$RemainingArgs = @()
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# Support POSIX double-dash flags (--version, --repo-owner, --repo-name, --out-dir)
+if ($null -ne $RemainingArgs -and $RemainingArgs.Count -gt 0) {
+    for ($i = 0; $i -lt $RemainingArgs.Count; $i++) {
+        switch ($RemainingArgs[$i]) {
+            "--version"    { if ($i + 1 -lt $RemainingArgs.Count) { $Version = $RemainingArgs[++$i] } }
+            "--repo-owner" { if ($i + 1 -lt $RemainingArgs.Count) { $RepoOwner = $RemainingArgs[++$i] } }
+            "--repo-name"  { if ($i + 1 -lt $RemainingArgs.Count) { $RepoName = $RemainingArgs[++$i] } }
+            "--out-dir"    { if ($i + 1 -lt $RemainingArgs.Count) { $OutDir = $RemainingArgs[++$i] } }
+        }
+    }
+}
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path

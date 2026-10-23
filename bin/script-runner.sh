@@ -6,19 +6,20 @@
 # execute either the .sh or .ps1 version of any script in this plugin.
 #
 # How the polyglot header works (per cross-platform-command-format-for-sh-and-pwsh.md):
-# 1. `set --% 2>/dev/null ; : '`
-#    - In PowerShell: `set` (Set-Variable) sees `--%` (stop-parsing token) and
-#      silently exits (stderr redirected to $null); PowerShell then executes the
-#       subsequent lines up to `exit $LASTEXITCODE`.
-#    - In POSIX sh/bash: `set --% 2>/dev/null` is a silent no-op that preserves
-#      `$@`, and `: '...'` is a no-op single-quoted literal covering the entire
-#      PowerShell section.
+# 1. `sv --% 2>/dev/null ; : '`
+#    - In PowerShell: `sv` (Set-Variable) sees `--%` (stop-parsing token) and
+#      silently sets variable `--%` (no stdout/stderr); PowerShell then executes
+#      the subsequent lines up to `exit $code`.
+#    - In POSIX sh (dash/bash/ash): `sv` is not a POSIX special built-in (unlike
+#      `set`, which aborts dash with exit code 2 on `--%`), so `sv --% 2>/dev/null`
+#      silently fails and `; : '...'` runs a no-op single-quoted literal covering
+#      the entire PowerShell section while preserving `$@`.
 # 2. `' >/dev/null ; : ' <# '`
 #    - In PowerShell: opens a `<# ... #>` block comment hiding all POSIX sh syntax.
 #    - In POSIX sh/bash: closes the first `: '...'` and opens a second `: '...'`
 #      that consumes `<# `, allowing the POSIX sh section to run cleanly.
 # =============================================================================
-set --% 2>/dev/null ; : '
+sv --% 2>/dev/null ; : '
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 

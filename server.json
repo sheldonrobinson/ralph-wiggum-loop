@@ -1,72 +1,72 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.sheldonrobinson/ralph-wiggum-loop",
-  "title": "Ralph Wiggum Loop",
-  "description": "Autonomous iterative AI development MCP server with spec-driven worker/reviewer SHIP/REVISE loops.",
-  "version": "1.1.0",
-  "websiteUrl": "https://sheldonrobinson.github.io/ralph-wiggum-loop",
-  "repository": {
-    "url": "https://github.com/sheldonrobinson/ralph-wiggum-loop",
-    "source": "github"
-  },
-  "packages": [
-    {
-      "registryType": "mcpb",
-      "identifier": "https://github.com/sheldonrobinson/ralph-wiggum-loop/releases/download/v1.1.0/ralph-wiggum-loop.sh.mcpb",
-      "version": "1.1.0",
-      "fileSha256": "ab94338f5cf6fefddbf2fde7849788ae05eae6ebb8b87a528388e80bac63f327",
-      "runtimeHint": "sh",
-      "transport": {
-        "type": "stdio"
-      },
-      "packageArguments": [
-        {
-          "type": "named",
-          "name": "--stdio",
-          "description": "Run the POSIX sh MCP server over standard input/output (stdio)"
-        }
-      ],
-      "environmentVariables": [
-        {
-          "name": "RALPH_STATE_BASE",
-          "description": "Directory path where active Ralph Loop state and iteration history are stored",
-          "isRequired": false
-        },
-        {
-          "name": "RALPH_RECIPE_DIR",
-          "description": "Directory path containing workflow recipe JSON files",
-          "isRequired": false
-        }
-      ]
-    },
-    {
-      "registryType": "mcpb",
-      "identifier": "https://github.com/sheldonrobinson/ralph-wiggum-loop/releases/download/v1.1.0/ralph-wiggum-loop.pwsh.mcpb",
-      "version": "1.1.0",
-      "fileSha256": "fe635650d38c7a95e576638d4273242de63da5c1ac51a690c1e2fe7176459af2",
-      "runtimeHint": "pwsh",
-      "transport": {
-        "type": "stdio"
-      },
-      "packageArguments": [
-        {
-          "type": "named",
-          "name": "-Stdio",
-          "description": "Run the PowerShell MCP server over standard input/output (stdio)"
-        }
-      ],
-      "environmentVariables": [
-        {
-          "name": "RALPH_STATE_BASE",
-          "description": "Directory path where active Ralph Loop state and iteration history are stored",
-          "isRequired": false
-        },
-        {
-          "name": "RALPH_RECIPE_DIR",
-          "description": "Directory path containing workflow recipe JSON files",
-          "isRequired": false
-        }
-      ]
-    }
-  ]
+    "$schema":  "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name":  "io.github.sheldonrobinson/ralph-wiggum-loop",
+    "title":  "Ralph Wiggum Loop",
+    "description":  "Autonomous iterative AI development MCP server with spec-driven worker/reviewer SHIP/REVISE loops.",
+    "version":  "1.1.0",
+    "websiteUrl":  "https://sheldonrobinson.github.io/ralph-wiggum-loop",
+    "repository":  {
+                       "url":  "https://github.com/sheldonrobinson/ralph-wiggum-loop",
+                       "source":  "github"
+                   },
+    "packages":  [
+                     {
+                         "registryType":  "mcpb",
+                         "identifier":  "https://github.com/sheldonrobinson/ralph-wiggum-loop/releases/download/v1.1.0/ralph-wiggum-loop.sh.mcpb",
+                         "version":  "1.1.0",
+                         "fileSha256":  "9e76a7f24d34a53fa9e65491803d25552bc0690c061ea6b79144d3fe7b9a7fb1",
+                         "runtimeHint":  "sh",
+                         "transport":  {
+                                           "type":  "stdio"
+                                       },
+                         "packageArguments":  [
+                                                  {
+                                                      "type":  "named",
+                                                      "name":  "--stdio",
+                                                      "description":  "Run the POSIX sh MCP server over standard input/output (stdio)"
+                                                  }
+                                              ],
+                         "environmentVariables":  [
+                                                      {
+                                                          "name":  "RALPH_STATE_BASE",
+                                                          "description":  "Directory path where active Ralph Loop state and iteration history are stored",
+                                                          "isRequired":  false
+                                                      },
+                                                      {
+                                                          "name":  "RALPH_RECIPE_DIR",
+                                                          "description":  "Directory path containing workflow recipe JSON files",
+                                                          "isRequired":  false
+                                                      }
+                                                  ]
+                     },
+                     {
+                         "registryType":  "mcpb",
+                         "identifier":  "https://github.com/sheldonrobinson/ralph-wiggum-loop/releases/download/v1.1.0/ralph-wiggum-loop.pwsh.mcpb",
+                         "version":  "1.1.0",
+                         "fileSha256":  "a779a2070be8ed4ff440b8f2112ef9d54eab482e85181037c3b0de1af339b53f",
+                         "runtimeHint":  "pwsh",
+                         "transport":  {
+                                           "type":  "stdio"
+                                       },
+                         "packageArguments":  [
+                                                  {
+                                                      "type":  "named",
+                                                      "name":  "-Stdio",
+                                                      "description":  "Run the PowerShell MCP server over standard input/output (stdio)"
+                                                  }
+                                              ],
+                         "environmentVariables":  [
+                                                      {
+                                                          "name":  "RALPH_STATE_BASE",
+                                                          "description":  "Directory path where active Ralph Loop state and iteration history are stored",
+                                                          "isRequired":  false
+                                                      },
+                                                      {
+                                                          "name":  "RALPH_RECIPE_DIR",
+                                                          "description":  "Directory path containing workflow recipe JSON files",
+                                                          "isRequired":  false
+                                                      }
+                                                  ]
+                     }
+                 ]
 }
