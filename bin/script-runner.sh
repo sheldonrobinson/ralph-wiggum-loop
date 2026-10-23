@@ -36,7 +36,7 @@ function Resolve-TargetScripts {
         (Join-Path $PluginRoot "bin\$stripped"),
         (Join-Path $PluginRoot ".agents\skills\ralph-wiggum-loop\scripts\$stripped"),
         (Join-Path $PluginRoot "skills\ralph-wiggum-loop\scripts\$stripped"),
-        (Join-Path $PluginRoot "com.anthropic.claude-code\hooks\$stripped"),
+        (Join-Path $PluginRoot "io.github.sheldonrobinson.ralph-wiggum-loop\hooks\$stripped"),
         (Join-Path (Get-Location).Path $stripped)
     )
     if ([System.IO.Path]::IsPathRooted($stripped)) {
@@ -86,7 +86,7 @@ TARGETS (auto-resolved to .ps1 or .sh):
   ralph-wiggum-loop   (default) Main MCP server & CLI loop runner (bin/ralph-wiggum-loop.{ps1,sh})
   setup-ralph-loop    In-session Stop-hook setup (.agents/skills/ralph-wiggum-loop/scripts/setup-ralph-loop.{ps1,sh})
   start-http-server   Streamable HTTP service manager (.agents/skills/ralph-wiggum-loop/scripts/start-http-server.{ps1,sh})
-  stop-hook           Session Stop hook (com.anthropic.claude-code/hooks/stop-hook.{ps1,sh})
+  stop-hook           Session Stop hook (io.github.sheldonrobinson.ralph-wiggum-loop/hooks/stop-hook.{ps1,sh})
   <path/to/script>    Any custom script path (with or without .ps1 / .sh extension)
 "@
             exit 0
@@ -186,7 +186,7 @@ resolve_target_base() {
         "${PLUGIN_ROOT}/bin/${stripped}" \
         "${PLUGIN_ROOT}/.agents/skills/ralph-wiggum-loop/scripts/${stripped}" \
         "${PLUGIN_ROOT}/skills/ralph-wiggum-loop/scripts/${stripped}" \
-        "${PLUGIN_ROOT}/com.anthropic.claude-code/hooks/${stripped}" \
+        "${PLUGIN_ROOT}/io.github.sheldonrobinson.ralph-wiggum-loop/hooks/${stripped}" \
         "${stripped}"
     do
         if [ -f "${candidate}.sh" ] || [ -f "${candidate}.ps1" ]; then
@@ -222,7 +222,7 @@ TARGETS (auto-resolved to .sh or .ps1):
   ralph-wiggum-loop   (default) Main MCP server & CLI loop runner (bin/ralph-wiggum-loop.{sh,ps1})
   setup-ralph-loop    In-session Stop-hook setup (.agents/skills/ralph-wiggum-loop/scripts/setup-ralph-loop.{sh,ps1})
   start-http-server   Streamable HTTP service manager (.agents/skills/ralph-wiggum-loop/scripts/start-http-server.{sh,ps1})
-  stop-hook           Session Stop hook (com.anthropic.claude-code/hooks/stop-hook.{sh,ps1})
+  stop-hook           Session Stop hook (io.github.sheldonrobinson.ralph-wiggum-loop/hooks/stop-hook.{sh,ps1})
   <path/to/script>    Any custom script path (with or without .sh / .ps1 extension)
 HELP_EOF
             exit 0

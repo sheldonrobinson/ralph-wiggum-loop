@@ -1,0 +1,99 @@
+{
+  "manifest_version": "0.3",
+  "name": "ralph-wiggum-loop.sh",
+  "display_name": "Ralph Wiggum Loop (Bash)",
+  "version": "1.1.0",
+  "description": "Autonomous iterative AI development MCP server (Bash edition for Linux/macOS) with spec-driven worker/reviewer SHIP/REVISE loops.",
+  "author": {
+    "name": "sheldonrobinson",
+    "email": "sheldon.robinson@gmail.com",
+    "url": "https://github.com/sheldonrobinson"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sheldonrobinson/ralph-wiggum-loop.git"
+  },
+  "homepage": "https://sheldonrobinson.github.io/ralph-wiggum-loop",
+  "documentation": "https://sheldonrobinson.github.io/ralph-wiggum-loop/deploy.html",
+  "license": "MIT",
+  "keywords": [
+    "ralph-loop",
+    "ralph-wiggum",
+    "bash",
+    "mcp",
+    "iterative-development",
+    "spec-driven-development",
+    "code-review",
+    "cross-model-review",
+    "self-improvement"
+  ],
+  "compatibility": {
+    "platforms": [
+      "linux",
+      "darwin"
+    ]
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "bin/ralph-wiggum-loop.sh",
+    "mcp_config": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "command -v jq >/dev/null 2>&1 || { for d in /opt/homebrew/bin /usr/local/bin; do [ -d \"$d\" ] && [ \"${PATH#*$d}\" = \"$PATH\" ] && PATH=\"$d:$PATH\"; done; export PATH; }; exec sh \"$0\" \"$@\"",
+        "${__dirname}/bin/ralph-wiggum-loop.sh",
+        "--stdio"
+      ],
+      "env": {
+        "RALPH_STATE_BASE": "${__dirname}/.agents/state",
+        "RALPH_RECIPE_DIR": "${__dirname}/recipes"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "ralph_loop_initialize",
+      "description": "Initialize a new Ralph Loop session with a task specification and optional model/profile overrides."
+    },
+    {
+      "name": "ralph_loop_get_task",
+      "description": "Retrieve the current task description and iteration context."
+    },
+    {
+      "name": "ralph_loop_submit_work",
+      "description": "Submit worker iteration output, summary of changes, and files modified for reviewer evaluation."
+    },
+    {
+      "name": "ralph_loop_get_work",
+      "description": "Retrieve the latest worker submission for review."
+    },
+    {
+      "name": "ralph_loop_submit_review",
+      "description": "Submit reviewer evaluation with SHIP or REVISE decision, structured feedback, and issue list."
+    },
+    {
+      "name": "ralph_loop_get_feedback",
+      "description": "Retrieve the latest reviewer decision, feedback, and issues."
+    },
+    {
+      "name": "ralph_loop_get_status",
+      "description": "Inspect the current loop state, iteration counter, phase, and history."
+    },
+    {
+      "name": "ralph_loop_get_config",
+      "description": "Retrieve the active session configuration, worker/reviewer models, and profile settings."
+    },
+    {
+      "name": "ralph_loop_reset",
+      "description": "Cancel or reset the active Ralph Loop session."
+    },
+    {
+      "name": "ralph_loop_block",
+      "description": "Mark the loop as blocked when human intervention or external clarification is required."
+    },
+    {
+      "name": "ralph_loop_run",
+      "description": "Execute a full automated Worker/Reviewer Ralph Loop run for a task."
+    }
+  ]
+}

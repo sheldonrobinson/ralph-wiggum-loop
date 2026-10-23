@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "ralph-wiggum-loop": {
+      "type": "stdio",
+      "command": "{{MCP_STDIO_COMMAND}}",
+      "args": {{MCP_STDIO_ARGS_JSON}},
+      "cwd": "${PLUGIN_ROOT}",
+      "env": {
+        "RALPH_STATE_BASE": "${PLUGIN_DATA}/state",
+        "RALPH_RECIPE_DIR": "${PLUGIN_ROOT}/recipes"
+      }
+    },
+    "ralph-wiggum-loop-http": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:8080/mcp"
+    }
+  }
+}

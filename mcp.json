@@ -4,7 +4,10 @@
     "ralph-wiggum-loop": {
       "type": "stdio",
       "command": "./bin/script-runner",
-      "args": ["ralph-wiggum-loop", "--stdio"],
+      "args": [
+        "ralph-wiggum-loop",
+        "--stdio"
+      ],
       "cwd": "${PLUGIN_ROOT}",
       "env": {
         "RALPH_STATE_BASE": "${PLUGIN_DATA}/state",
@@ -13,8 +16,15 @@
     },
     "ralph-wiggum-loop-sh": {
       "type": "stdio",
-      "command": "./bin/script-runner.sh",
-      "args": ["--use-sh", "ralph-wiggum-loop", "--stdio"],
+      "command": "sh",
+      "args": [
+        "-c",
+        "command -v jq >/dev/null 2>&1 || { for d in /opt/homebrew/bin /usr/local/bin; do [ -d \"$d\" ] && [ \"${PATH#*$d}\" = \"$PATH\" ] && PATH=\"$d:$PATH\"; done; export PATH; }; exec sh \"$0\" \"$@\"",
+        "${PLUGIN_ROOT}/bin/script-runner.sh",
+        "--use-sh",
+        "ralph-wiggum-loop",
+        "--stdio"
+      ],
       "cwd": "${PLUGIN_ROOT}",
       "env": {
         "RALPH_STATE_BASE": "${PLUGIN_DATA}/state",

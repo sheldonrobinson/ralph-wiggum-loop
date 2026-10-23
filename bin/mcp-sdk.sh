@@ -1,10 +1,10 @@
-#!/usr/bin/env bash
-# mcp-sdk.sh - Generic Shebang MCP SDK (Bash)
+#!/usr/bin/env sh
+# mcp-sdk.sh - Generic Shebang MCP SDK (POSIX sh compliant)
 # Implementation of the Model Context Protocol (MCP) specification (latest: 2025-03-26 / 2024-11-05)
 # Supports both stdio and streamable-http transports.
 #
 # This SDK is strictly generic and provides core MCP protocol functions usable by any
-# shell-based MCP server. It contains NO application-specific logic.
+# POSIX shell-based MCP server. It contains NO application-specific logic.
 #
 # ============================================================================
 # REQUIRED features (MUST implement per MCP specification):
@@ -25,11 +25,16 @@
 #   - Legacy HTTP+SSE transport (2024-11-05 separate SSE endpoint)
 # ============================================================================
 
-set -euo pipefail
+set -eu
+
+# Carriage-return character for stripping CRLF line endings in POSIX sh
+MCP_CR="$(printf '\r')"
+MCP_NL="
+"
 
 # --- Protocol constants -----------------------------------------------------
 MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION:-2025-03-26}"
-MCP_SUPPORTED_VERSIONS=("2025-03-26" "2024-11-05")
+MCP_SUPPORTED_VERSIONS="2025-03-26 2024-11-05"
 MCP_SERVER_NAME="${MCP_SERVER_NAME:-shebang-mcp-sdk}"
 MCP_SERVER_VERSION="${MCP_SERVER_VERSION:-1.0.0}"
 
@@ -42,22 +47,38 @@ MCP_SESSION_ID=""
 MCP_INITIALIZED="false"
 MCP_HTTP_SERVER_PID=""
 MCP_CLEANUP_DONE="false"
-declare -a MCP_CLEANUP_HOOKS=()
-declare -a MCP_TEMP_FILES=()
+MCP_CLEANUP_HOOKS=""
+MCP_TEMP_FILES=""
 
 # --- On-Exit & Connection Cleanup Handler -----------------------------------
 # Register a custom cleanup callback function name to run on exit
 mcp_register_cleanup() {
-    local hook="${1:-}"
-    if [[ -n "${hook}" ]]; then
-        MCP_CLEANUP_HOOKS+=("${hook}")
+    _hook="${1:-}"
+    if [ -n "${_hook}" ]; then
+        if [ -z "${MCP_CLEANUP_HOOKS}" ]; then
+            MCP_CLEANUP_HOOKS="${_hook}"
+        else
+            MCP_CLEANUP_HOOKS="${MCP_CLEANUP_HOOKS} ${_hook}"
+        fi
+    fi
+}
+
+# Track a temporary file/FIFO for automatic removal on exit
+mcp_register_temp_file() {
+    _tmpf="${1:-}"
+    if [ -n "${_tmpf}" ]; then
+        if [ -z "${MCP_TEMP_FILES}" ]; then
+            MCP_TEMP_FILES="${_tmpf}"
+        else
+            MCP_TEMP_FILES="${MCP_TEMP_FILES}${MCP_NL}${_tmpf}"
+        fi
     fi
 }
 
 # Close active MCP transport connections and release resources
 mcp_close_connection() {
     # Stop background HTTP listener if running
-    if [[ -n "${MCP_HTTP_SERVER_PID:-}" ]]; then
+    if [ -n "${MCP_HTTP_SERVER_PID:-}" ]; then
         if kill -0 "${MCP_HTTP_SERVER_PID}" 2>/dev/null; then
             kill "${MCP_HTTP_SERVER_PID}" 2>/dev/null || true
             wait "${MCP_HTTP_SERVER_PID}" 2>/dev/null || true
@@ -66,12 +87,16 @@ mcp_close_connection() {
     fi
 
     # Remove any temporary files/FIFOs created by the transport
-    if [[ ${#MCP_TEMP_FILES[@]} -gt 0 ]]; then
-        local f
-        for f in "${MCP_TEMP_FILES[@]}"; do
-            [[ -n "${f}" && -e "${f}" ]] && rm -rf "${f}" 2>/dev/null || true
+    if [ -n "${MCP_TEMP_FILES}" ]; then
+        _old_ifs="${IFS}"
+        IFS="${MCP_NL}"
+        for _f in ${MCP_TEMP_FILES}; do
+            if [ -n "${_f}" ] && [ -e "${_f}" ]; then
+                rm -rf "${_f}" 2>/dev/null || true
+            fi
         done
-        MCP_TEMP_FILES=()
+        IFS="${_old_ifs}"
+        MCP_TEMP_FILES=""
     fi
 
     MCP_INITIALIZED="false"
@@ -80,19 +105,18 @@ mcp_close_connection() {
 
 # Trap handler invoked on EXIT, INT, TERM, HUP
 mcp_on_exit() {
-    local exit_code=$?
+    _exit_code=$?
     trap - EXIT INT TERM HUP
-    if [[ "${MCP_CLEANUP_DONE}" == "true" ]]; then
-        return "${exit_code}"
+    if [ "${MCP_CLEANUP_DONE}" = "true" ]; then
+        return "${_exit_code}"
     fi
     MCP_CLEANUP_DONE="true"
 
     # Run registered consumer cleanup hooks if any
-    if [[ ${#MCP_CLEANUP_HOOKS[@]} -gt 0 ]]; then
-        local hook
-        for hook in "${MCP_CLEANUP_HOOKS[@]}"; do
-            if declare -F "${hook}" >/dev/null 2>&1; then
-                "${hook}" || true
+    if [ -n "${MCP_CLEANUP_HOOKS}" ]; then
+        for _hook in ${MCP_CLEANUP_HOOKS}; do
+            if command -v "${_hook}" >/dev/null 2>&1; then
+                "${_hook}" || true
             fi
         done
     fi
@@ -100,14 +124,14 @@ mcp_on_exit() {
     # Close connections and clean up transport resources
     mcp_close_connection || true
 
-    return "${exit_code}"
+    return "${_exit_code}"
 }
 
 mcp_on_signal() {
-    local sig="${1:-TERM}"
-    local code="${2:-143}"
+    _sig="${1:-TERM}"
+    _code="${2:-143}"
     mcp_on_exit || true
-    exit "${code}"
+    exit "${_code}"
 }
 
 trap mcp_on_exit EXIT
@@ -120,72 +144,89 @@ json_escape() {
     printf '%s' "${1:-}" | jq -Rs .
 }
 
+is_json_number() {
+    case "${1:-}" in
+        ''|'-') return 1 ;;
+        -*)
+            _num="${1#-}"
+            ;;
+        *)
+            _num="${1}"
+            ;;
+    esac
+    case "${_num}" in
+        ''|*[!0-9.]*|*.*.*) return 1 ;;
+        .*) return 1 ;;
+        *.) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
 # JSON-RPC 2.0 response constructor
 # Usage: json_response <id> <result_json> [error_json]
-#   id         : request id (number/string) or "null"/"" for null id
-#   result_json: valid JSON string for the result (default "{}")
-#   error_json : valid JSON string for the error, or empty for success
 json_response() {
-    local id="${1:-null}"
-    local result=${2:-"{}"}
-    local error="${3:-}"
+    _jr_id="${1:-null}"
+    _jr_result="${2:-"{}"}"
+    _jr_error="${3:-}"
 
-    # Build the id expression for jq (properly handles JSON null, numbers, and strings)
-    local id_expr
-    if [[ -z "${id}" || "${id}" == "null" ]]; then
-        id_expr="null"
-    elif [[ "${id}" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
-        id_expr="${id}"
-    elif [[ "${id}" =~ ^\".*\"$ ]]; then
-        id_expr="${id}"
+    if [ -z "${_jr_id}" ] || [ "${_jr_id}" = "null" ]; then
+        _jr_id_expr="null"
+    elif is_json_number "${_jr_id}"; then
+        _jr_id_expr="${_jr_id}"
     else
-        id_expr=$(printf '%s' "${id}" | jq -Rs .)
+        case "${_jr_id}" in
+            \"*\")
+                _jr_id_expr="${_jr_id}"
+                ;;
+            *)
+                _jr_id_expr=$(printf '%s' "${_jr_id}" | jq -Rs .)
+                ;;
+        esac
     fi
 
-    local payload
-    if [[ -n "${error}" ]]; then
-        if printf '%s' "${error}" | jq -e . >/dev/null 2>&1; then
-            payload=$(jq -cn \
-                --argjson id "${id_expr}" \
-                --argjson err "${error}" \
+    if [ -n "${_jr_error}" ]; then
+        if printf '%s' "${_jr_error}" | jq -e . >/dev/null 2>&1; then
+            _jr_payload=$(jq -cn \
+                --argjson id "${_jr_id_expr}" \
+                --argjson err "${_jr_error}" \
                 '{jsonrpc:"2.0", id:$id, error:$err}')
         else
-            payload=$(jq -cn \
-                --argjson id "${id_expr}" \
-                --arg msg "${error}" \
+            _jr_payload=$(jq -cn \
+                --argjson id "${_jr_id_expr}" \
+                --arg msg "${_jr_error}" \
                 '{jsonrpc:"2.0", id:$id, error:{code:-32603, message:$msg}}')
         fi
     else
-        local result_json="{}"
-        if [[ -n "${result}" ]]; then
-            if printf '%s' "${result}" | jq -e . >/dev/null 2>&1; then
-                result_json="${result}"
+        _jr_result_json="{}"
+        if [ -n "${_jr_result}" ]; then
+            if printf '%s' "${_jr_result}" | jq -e . >/dev/null 2>&1; then
+                _jr_result_json="${_jr_result}"
             else
-                result_json=$(printf '%s' "${result}" | jq -Rs '{content:[{type:"text",text:.}]}')
+                _jr_result_json=$(printf '%s' "${_jr_result}" | jq -Rs '{content:[{type:"text",text:.}]}')
             fi
         fi
-        payload=$(jq -cn \
-            --argjson id "${id_expr}" \
-            --argjson res "${result_json}" \
+        _jr_payload=$(jq -cn \
+            --argjson id "${_jr_id_expr}" \
+            --argjson res "${_jr_result_json}" \
             '{jsonrpc:"2.0", id:$id, result:$res}')
     fi
-    printf '%s\n' "${payload}"
+    printf '%s\n' "${_jr_payload}"
 }
 
 # JSON-RPC 2.0 error object constructor
 # Usage: mcp_error <code> <message> [data_json]
 mcp_error() {
-    local code="${1:--32603}"
-    local message="${2:-Internal error}"
-    local data="${3:-null}"
-    if [[ -z "${data}" || "${data}" == "null" ]]; then
-        jq -cn --argjson code "${code}" --arg message "${message}" \
+    _me_code="${1:--32603}"
+    _me_message="${2:-Internal error}"
+    _me_data="${3:-null}"
+    if [ -z "${_me_data}" ] || [ "${_me_data}" = "null" ]; then
+        jq -cn --argjson code "${_me_code}" --arg message "${_me_message}" \
             '{code:$code, message:$message}'
     else
-        if ! printf '%s' "${data}" | jq -e . >/dev/null 2>&1; then
-            data=$(printf '%s' "${data}" | jq -Rs .)
+        if ! printf '%s' "${_me_data}" | jq -e . >/dev/null 2>&1; then
+            _me_data=$(printf '%s' "${_me_data}" | jq -Rs .)
         fi
-        jq -cn --argjson code "${code}" --arg message "${message}" --argjson data "${data}" \
+        jq -cn --argjson code "${_me_code}" --arg message "${_me_message}" --argjson data "${_me_data}" \
             '{code:$code, message:$message, data:$data}'
     fi
 }
@@ -193,42 +234,35 @@ mcp_error() {
 # Format a tool result per MCP spec (content array with text item + optional structured/raw fields)
 # Usage: mcp_tool_result <text_or_json> [is_error]
 mcp_tool_result() {
-    local content="${1:-}"
-    local is_error="${2:-false}"
-    jq -cn --arg text "${content}" --argjson isError "${is_error}" \
+    _mtr_content="${1:-}"
+    _mtr_is_error="${2:-false}"
+    jq -cn --arg text "${_mtr_content}" --argjson isError "${_mtr_is_error}" \
         '{content:[{type:"text", text:$text}], isError:$isError}'
 }
 
 # Validate and parse incoming JSON-RPC 2.0 message
 # Usage: mcp_parse_message <message>
-# Prints:
-#   VALID=<true|false>
-#   IS_NOTIFICATION=<true|false>
-#   ID=<id_or_null>
-#   METHOD=<method>
-#   PARAMS=<params_json>
 mcp_parse_message() {
-    local message="${1:-}"
-    if ! printf '%s' "${message}" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    _mpm_message="${1:-}"
+    if ! printf '%s' "${_mpm_message}" | jq -e 'type == "object"' >/dev/null 2>&1; then
         printf 'VALID=false\nIS_NOTIFICATION=false\nID=null\nMETHOD=\nPARAMS={}\n'
         return 0
     fi
 
-    local jsonrpc has_id id method params is_notification
-    jsonrpc=$(printf '%s' "${message}" | jq -r '.jsonrpc // ""' 2>/dev/null || echo "")
-    has_id=$(printf '%s' "${message}" | jq -r 'has("id")' 2>/dev/null || echo "false")
-    id=$(printf '%s' "${message}" | jq -r 'if .id == null then "null" else (.id | tostring) end' 2>/dev/null || echo "null")
-    method=$(printf '%s' "${message}" | jq -r 'if (.method | type) == "string" then .method else "" end' 2>/dev/null || echo "")
-    params=$(printf '%s' "${message}" | jq -c '.params // {}' 2>/dev/null || echo "{}")
+    _mpm_jsonrpc=$(printf '%s' "${_mpm_message}" | jq -r '.jsonrpc // ""' 2>/dev/null || echo "")
+    _mpm_has_id=$(printf '%s' "${_mpm_message}" | jq -r 'has("id")' 2>/dev/null || echo "false")
+    _mpm_id=$(printf '%s' "${_mpm_message}" | jq -r 'if .id == null then "null" else (.id | tostring) end' 2>/dev/null || echo "null")
+    _mpm_method=$(printf '%s' "${_mpm_message}" | jq -r 'if (.method | type) == "string" then .method else "" end' 2>/dev/null || echo "")
+    _mpm_params=$(printf '%s' "${_mpm_message}" | jq -c '.params // {}' 2>/dev/null || echo "{}")
 
-    if [[ "${has_id}" == "false" ]]; then
-        is_notification="true"
+    if [ "${_mpm_has_id}" = "false" ]; then
+        _mpm_is_notification="true"
     else
-        is_notification="false"
+        _mpm_is_notification="false"
     fi
 
     printf 'VALID=true\nJSONRPC=%s\nIS_NOTIFICATION=%s\nID=%s\nMETHOD=%s\nPARAMS=%s\n' \
-        "${jsonrpc}" "${is_notification}" "${id}" "${method}" "${params}"
+        "${_mpm_jsonrpc}" "${_mpm_is_notification}" "${_mpm_id}" "${_mpm_method}" "${_mpm_params}"
 }
 
 # ============================================================================
@@ -237,18 +271,16 @@ mcp_parse_message() {
 
 # Handle MCP initialize request
 handle_initialize() {
-    local id="${1}"
-    local params=${2:-"{}"}
+    _hi_id="${1}"
+    _hi_params="${2:-"{}"}"
 
-    local client_version negotiated_version
-    client_version=$(printf '%s' "${params}" | jq -r '.protocolVersion // ""' 2>/dev/null || echo "")
-    negotiated_version="${MCP_PROTOCOL_VERSION}"
+    _hi_client_version=$(printf '%s' "${_hi_params}" | jq -r '.protocolVersion // ""' 2>/dev/null || echo "")
+    _hi_negotiated="${MCP_PROTOCOL_VERSION}"
 
-    if [[ -n "${client_version}" ]]; then
-        local v
-        for v in "${MCP_SUPPORTED_VERSIONS[@]}"; do
-            if [[ "${v}" == "${client_version}" ]]; then
-                negotiated_version="${client_version}"
+    if [ -n "${_hi_client_version}" ]; then
+        for _v in ${MCP_SUPPORTED_VERSIONS}; do
+            if [ "${_v}" = "${_hi_client_version}" ]; then
+                _hi_negotiated="${_hi_client_version}"
                 break
             fi
         done
@@ -256,20 +288,18 @@ handle_initialize() {
 
     MCP_INITIALIZED="true"
 
-    local capabilities server_info result
-    capabilities=$(jq -cn '{tools:{}}')
-    server_info=$(jq -cn --arg name "${MCP_SERVER_NAME}" --arg version "${MCP_SERVER_VERSION}" \
+    _hi_caps=$(jq -cn '{tools:{}}')
+    _hi_info=$(jq -cn --arg name "${MCP_SERVER_NAME}" --arg version "${MCP_SERVER_VERSION}" \
         '{name:$name, version:$version}')
-    result=$(jq -cn \
-        --arg proto "${negotiated_version}" \
-        --argjson caps "${capabilities}" \
-        --argjson info "${server_info}" \
+    _hi_res=$(jq -cn \
+        --arg proto "${_hi_negotiated}" \
+        --argjson caps "${_hi_caps}" \
+        --argjson info "${_hi_info}" \
         '{protocolVersion:$proto, capabilities:$caps, serverInfo:$info}')
-    json_response "${id}" "${result}"
+    json_response "${_hi_id}" "${_hi_res}"
 }
 
 # Handle notifications/initialized (and legacy initialized) notification
-# Notifications MUST NOT produce a response.
 handle_initialized() {
     MCP_INITIALIZED="true"
     return 0
@@ -277,153 +307,140 @@ handle_initialized() {
 
 # Handle MCP ping request
 handle_ping() {
-    local id="${1}"
-    json_response "${id}" "{}"
+    json_response "${1}" "{}"
 }
 
 # Default generic tools/list handler (consumers can override handle_tools_list or handle_list_tools)
 handle_tools_list() {
-    local id="${1}"
-    local params=${2:-"{}"}
+    _htl_id="${1}"
+    _htl_params="${2:-"{}"}"
 
-    if declare -F handle_list_tools >/dev/null 2>&1; then
-        handle_list_tools "${id}" "${params}"
+    if command -v handle_list_tools >/dev/null 2>&1; then
+        handle_list_tools "${_htl_id}" "${_htl_params}"
         return 0
     fi
 
-    local result
-    result=$(jq -cn '{tools:[]}')
-    json_response "${id}" "${result}"
+    _htl_res=$(jq -cn '{tools:[]}')
+    json_response "${_htl_id}" "${_htl_res}"
 }
 
 # Default generic tools/call handler (consumers can override handle_tools_call)
 handle_tools_call() {
-    local id="${1}"
-    local params=${2:-"{}"}
+    _htc_id="${1}"
+    _htc_params="${2:-"{}"}"
 
-    local name
-    name=$(printf '%s' "${params}" | jq -r '.name // ""' 2>/dev/null || echo "")
-    if [[ -z "${name}" ]]; then
-        local err
-        err=$(mcp_error -32602 "Invalid params: missing tool name")
-        json_response "${id}" "" "${err}"
+    _htc_name=$(printf '%s' "${_htc_params}" | jq -r '.name // ""' 2>/dev/null || echo "")
+    if [ -z "${_htc_name}" ]; then
+        _htc_err=$(mcp_error -32602 "Invalid params: missing tool name")
+        json_response "${_htc_id}" "" "${_htc_err}"
         return 0
     fi
 
-    local err
-    err=$(mcp_error -32601 "Tool not found: ${name}")
-    json_response "${id}" "" "${err}"
+    _htc_err=$(mcp_error -32601 "Tool not found: ${_htc_name}")
+    json_response "${_htc_id}" "" "${_htc_err}"
 }
 
 # Generic JSON-RPC 2.0 message dispatcher
-# Dispatches a single JSON-RPC message string and prints the response (if any) to stdout.
 mcp_dispatch_message() {
-    local line="${1:-}"
-    [[ -z "${line}" ]] && return 0
-
-    if ! printf '%s' "${line}" | jq -e . >/dev/null 2>&1; then
-        local err
-        err=$(mcp_error -32700 "Parse error")
-        json_response "null" "" "${err}"
+    _mdm_line="${1:-}"
+    if [ -z "${_mdm_line}" ]; then
         return 0
     fi
 
-    # Support JSON-RPC batch arrays or single objects
-    local msg_type
-    msg_type=$(printf '%s' "${line}" | jq -r 'type' 2>/dev/null || echo "")
-    if [[ "${msg_type}" == "array" ]]; then
-        local len
-        len=$(printf '%s' "${line}" | jq 'length')
-        if [[ "${len}" -eq 0 ]]; then
-            local err
-            err=$(mcp_error -32600 "Invalid Request: empty batch")
-            json_response "null" "" "${err}"
+    if ! printf '%s' "${_mdm_line}" | jq -e . >/dev/null 2>&1; then
+        _mdm_err=$(mcp_error -32700 "Parse error")
+        json_response "null" "" "${_mdm_err}"
+        return 0
+    fi
+
+    _mdm_type=$(printf '%s' "${_mdm_line}" | jq -r 'type' 2>/dev/null || echo "")
+    if [ "${_mdm_type}" = "array" ]; then
+        _mdm_len=$(printf '%s' "${_mdm_line}" | jq 'length')
+        if [ "${_mdm_len}" -eq 0 ]; then
+            _mdm_err=$(mcp_error -32600 "Invalid Request: empty batch")
+            json_response "null" "" "${_mdm_err}"
             return 0
         fi
-        local responses=()
-        local idx item item_resp
-        for ((idx = 0; idx < len; idx++)); do
-            item=$(printf '%s' "${line}" | jq -c ".[${idx}]")
-            item_resp=$(mcp_dispatch_single "${item}")
-            if [[ -n "${item_resp}" ]]; then
-                responses+=("${item_resp}")
+        _mdm_responses=""
+        _mdm_idx=0
+        while [ "${_mdm_idx}" -lt "${_mdm_len}" ]; do
+            _mdm_item=$(printf '%s' "${_mdm_line}" | jq -c ".[${_mdm_idx}]")
+            _mdm_item_resp=$(mcp_dispatch_single "${_mdm_item}")
+            if [ -n "${_mdm_item_resp}" ]; then
+                if [ -z "${_mdm_responses}" ]; then
+                    _mdm_responses="${_mdm_item_resp}"
+                else
+                    _mdm_responses="${_mdm_responses}${MCP_NL}${_mdm_item_resp}"
+                fi
             fi
+            _mdm_idx=$((_mdm_idx + 1))
         done
-        if [[ ${#responses[@]} -gt 0 ]]; then
-            printf '%s\n' "${responses[@]}" | jq -cs '.'
+        if [ -n "${_mdm_responses}" ]; then
+            printf '%s\n' "${_mdm_responses}" | jq -cs '.'
         fi
         return 0
-    elif [[ "${msg_type}" != "object" ]]; then
-        local err
-        err=$(mcp_error -32600 "Invalid Request")
-        json_response "null" "" "${err}"
+    elif [ "${_mdm_type}" != "object" ]; then
+        _mdm_err=$(mcp_error -32600 "Invalid Request")
+        json_response "null" "" "${_mdm_err}"
         return 0
     fi
 
-    mcp_dispatch_single "${line}"
+    mcp_dispatch_single "${_mdm_line}"
 }
 
 mcp_dispatch_single() {
-    local message="${1}"
-    local parse_result
-    parse_result=$(mcp_parse_message "${message}")
+    _mds_message="${1}"
+    _mds_parse=$(mcp_parse_message "${_mds_message}")
 
-    local valid jsonrpc is_notification msg_id msg_method msg_params
-    valid=$(printf '%s\n' "${parse_result}" | grep '^VALID=' | cut -d= -f2-)
-    jsonrpc=$(printf '%s\n' "${parse_result}" | grep '^JSONRPC=' | cut -d= -f2-)
-    is_notification=$(printf '%s\n' "${parse_result}" | grep '^IS_NOTIFICATION=' | cut -d= -f2-)
-    msg_id=$(printf '%s\n' "${parse_result}" | grep '^ID=' | cut -d= -f2-)
-    msg_method=$(printf '%s\n' "${parse_result}" | grep '^METHOD=' | cut -d= -f2-)
-    msg_params=$(printf '%s\n' "${parse_result}" | grep '^PARAMS=' | cut -d= -f2-)
+    _mds_valid=$(printf '%s\n' "${_mds_parse}" | grep '^VALID=' | cut -d= -f2-)
+    _mds_jsonrpc=$(printf '%s\n' "${_mds_parse}" | grep '^JSONRPC=' | cut -d= -f2-)
+    _mds_is_notif=$(printf '%s\n' "${_mds_parse}" | grep '^IS_NOTIFICATION=' | cut -d= -f2-)
+    _mds_id=$(printf '%s\n' "${_mds_parse}" | grep '^ID=' | cut -d= -f2-)
+    _mds_method=$(printf '%s\n' "${_mds_parse}" | grep '^METHOD=' | cut -d= -f2-)
+    _mds_params=$(printf '%s\n' "${_mds_parse}" | grep '^PARAMS=' | cut -d= -f2-)
 
-    if [[ "${valid}" != "true" || "${jsonrpc}" != "2.0" ]]; then
-        local err
-        err=$(mcp_error -32600 "Invalid Request")
-        json_response "${msg_id}" "" "${err}"
+    if [ "${_mds_valid}" != "true" ] || [ "${_mds_jsonrpc}" != "2.0" ]; then
+        _mds_err=$(mcp_error -32600 "Invalid Request")
+        json_response "${_mds_id}" "" "${_mds_err}"
         return 0
     fi
 
-    # If message is a JSON-RPC response (has result or error and no method), ignore it
-    if [[ -z "${msg_method}" ]]; then
-        if printf '%s' "${message}" | jq -e 'has("result") or has("error")' >/dev/null 2>&1; then
+    if [ -z "${_mds_method}" ]; then
+        if printf '%s' "${_mds_message}" | jq -e 'has("result") or has("error")' >/dev/null 2>&1; then
             return 0
         fi
-        local err
-        err=$(mcp_error -32600 "Invalid Request: missing method")
-        json_response "${msg_id}" "" "${err}"
+        _mds_err=$(mcp_error -32600 "Invalid Request: missing method")
+        json_response "${_mds_id}" "" "${_mds_err}"
         return 0
     fi
 
-    case "${msg_method}" in
+    case "${_mds_method}" in
         initialize)
-            handle_initialize "${msg_id}" "${msg_params}"
+            handle_initialize "${_mds_id}" "${_mds_params}"
             ;;
         notifications/initialized|initialized)
             handle_initialized
             ;;
         notifications/*)
-            # Ignore other client notifications silently per spec
             return 0
             ;;
         ping)
-            handle_ping "${msg_id}"
+            handle_ping "${_mds_id}"
             ;;
         tools/list)
-            handle_tools_list "${msg_id}" "${msg_params}"
+            handle_tools_list "${_mds_id}" "${_mds_params}"
             ;;
         tools/call)
-            handle_tools_call "${msg_id}" "${msg_params}"
+            handle_tools_call "${_mds_id}" "${_mds_params}"
             ;;
         *)
-            # Allow custom route hook if consumer defines mcp_custom_method_handler
-            if declare -F mcp_custom_method_handler >/dev/null 2>&1; then
-                mcp_custom_method_handler "${msg_id}" "${msg_method}" "${msg_params}" "${is_notification}"
+            if command -v mcp_custom_method_handler >/dev/null 2>&1; then
+                mcp_custom_method_handler "${_mds_id}" "${_mds_method}" "${_mds_params}" "${_mds_is_notif}"
                 return 0
             fi
-            if [[ "${is_notification}" != "true" && "${msg_id}" != "null" && -n "${msg_id}" ]]; then
-                local err
-                err=$(mcp_error -32601 "Method not found: ${msg_method}")
-                json_response "${msg_id}" "" "${err}"
+            if [ "${_mds_is_notif}" != "true" ] && [ "${_mds_id}" != "null" ] && [ -n "${_mds_id}" ]; then
+                _mds_err=$(mcp_error -32601 "Method not found: ${_mds_method}")
+                json_response "${_mds_id}" "" "${_mds_err}"
             fi
             ;;
     esac
@@ -441,27 +458,19 @@ process_mcp_line() {
 # TRANSPORT: STDIO
 # ============================================================================
 
-# Run MCP server in stdio mode.
-# Reads newline-delimited JSON-RPC 2.0 messages from stdin, writes responses to stdout.
 mcp_stdio_server() {
-    local line
-    while IFS= read -r line || [[ -n "${line}" ]]; do
-        line="${line%$'\r'}"
-        [[ -z "${line}" ]] && continue
-        mcp_dispatch_message "${line}"
+    while IFS= read -r _stdio_line || [ -n "${_stdio_line}" ]; do
+        _stdio_line="${_stdio_line%"${MCP_CR}"}"
+        if [ -z "${_stdio_line}" ]; then
+            continue
+        fi
+        mcp_dispatch_message "${_stdio_line}"
     done
 }
 
 # ============================================================================
 # TRANSPORT: STREAMABLE-HTTP (MCP 2025-03-26 specification)
 # ============================================================================
-# Single MCP endpoint supporting POST, GET, DELETE:
-#   - POST   : Client sends JSON-RPC message(s).
-#              - If request(s): responds 200 OK with application/json (or text/event-stream)
-#                and includes Mcp-Session-Id header if session is active.
-#              - If notification(s) / response(s) only: responds 202 Accepted with empty body.
-#   - GET    : Opens an SSE stream (text/event-stream) or returns 405 Method Not Allowed.
-#   - DELETE : Terminates active session (Mcp-Session-Id) and returns 200 OK.
 
 check_curl_available() {
     if command -v curl >/dev/null 2>&1; then
@@ -475,142 +484,126 @@ check_curl_available() {
 mcp_generate_session_id() {
     if command -v uuidgen >/dev/null 2>&1; then
         uuidgen | tr '[:upper:]' '[:lower:]'
-    elif [[ -r /proc/sys/kernel/random/uuid ]]; then
+    elif [ -r /proc/sys/kernel/random/uuid ]; then
         cat /proc/sys/kernel/random/uuid
     else
-        printf 'mcp-%s-%s-%s\n' "$(date +%s)" "$$" "${RANDOM}"
+        _rand=$(awk 'BEGIN{srand(); printf "%d", int(rand()*100000)}' 2>/dev/null || echo "$$")
+        printf 'mcp-%s-%s-%s\n' "$(date +%s)" "$$" "${_rand}"
     fi
 }
 
 extract_jsonrpc_from_post() {
-    local http_body="${1:-}"
-    if [[ -z "${http_body}" ]]; then
+    _ejp_body="${1:-}"
+    if [ -z "${_ejp_body}" ]; then
         echo ""
         return 0
     fi
-    if printf '%s' "${http_body}" | jq -e . >/dev/null 2>&1; then
-        printf '%s' "${http_body}" | jq -c '.'
+    if printf '%s' "${_ejp_body}" | jq -e . >/dev/null 2>&1; then
+        printf '%s' "${_ejp_body}" | jq -c '.'
     else
         echo ""
     fi
 }
 
-# Format and send an HTTP response over stdout
-# Usage: send_http_response <body_content> [status_code] [content_type] [session_id]
 send_http_response() {
-    local response_body="${1:-}"
-    local status_code="${2:-200}"
-    local content_type="${3:-application/json}"
-    local session_id="${4:-${MCP_SESSION_ID:-}}"
+    _shr_body="${1:-}"
+    _shr_status="${2:-200}"
+    _shr_ctype="${3:-application/json}"
+    _shr_sid="${4:-${MCP_SESSION_ID:-}}"
 
-    local status_text="OK"
-    case "${status_code}" in
-        200) status_text="OK" ;;
-        202) status_text="Accepted" ;;
-        204) status_text="No Content" ;;
-        400) status_text="Bad Request" ;;
-        404) status_text="Not Found" ;;
-        405) status_text="Method Not Allowed" ;;
-        406) status_text="Not Acceptable" ;;
-        500) status_text="Internal Server Error" ;;
-        *)   status_text="OK" ;;
+    case "${_shr_status}" in
+        200) _shr_text="OK" ;;
+        202) _shr_text="Accepted" ;;
+        204) _shr_text="No Content" ;;
+        400) _shr_text="Bad Request" ;;
+        404) _shr_text="Not Found" ;;
+        405) _shr_text="Method Not Allowed" ;;
+        406) _shr_text="Not Acceptable" ;;
+        500) _shr_text="Internal Server Error" ;;
+        *)   _shr_text="OK" ;;
     esac
 
-    local content_length
-    content_length=$(printf '%s' "${response_body}" | wc -c | tr -d ' ')
+    _shr_len=$(printf '%s' "${_shr_body}" | wc -c | tr -d ' ')
 
-    printf 'HTTP/1.1 %s %s\r\n' "${status_code}" "${status_text}"
-    if [[ -n "${content_type}" && "${content_length}" -gt 0 ]]; then
-        printf 'Content-Type: %s\r\n' "${content_type}"
+    printf 'HTTP/1.1 %s %s\r\n' "${_shr_status}" "${_shr_text}"
+    if [ -n "${_shr_ctype}" ] && [ "${_shr_len}" -gt 0 ]; then
+        printf 'Content-Type: %s\r\n' "${_shr_ctype}"
     fi
-    if [[ -n "${session_id}" ]]; then
-        printf 'Mcp-Session-Id: %s\r\n' "${session_id}"
+    if [ -n "${_shr_sid}" ]; then
+        printf 'Mcp-Session-Id: %s\r\n' "${_shr_sid}"
     fi
     printf 'Cache-Control: no-cache\r\n'
     printf 'Connection: close\r\n'
-    printf 'Content-Length: %d\r\n' "${content_length}"
+    printf 'Content-Length: %d\r\n' "${_shr_len}"
     printf '\r\n'
-    if [[ "${content_length}" -gt 0 ]]; then
-        printf '%s' "${response_body}"
+    if [ "${_shr_len}" -gt 0 ]; then
+        printf '%s' "${_shr_body}"
     fi
 }
 
-# Format a JSON-RPC payload as an SSE (text/event-stream) HTTP response
 send_http_sse_response() {
-    local response_json="${1:-}"
-    local status_code="${2:-200}"
-    local session_id="${3:-${MCP_SESSION_ID:-}}"
-    local sse_body
-    sse_body=$(printf 'event: message\ndata: %s\n\n' "${response_json}")
-    send_http_response "${sse_body}" "${status_code}" "text/event-stream" "${session_id}"
+    _shs_json="${1:-}"
+    _shs_status="${2:-200}"
+    _shs_sid="${3:-${MCP_SESSION_ID:-}}"
+    _shs_body=$(printf 'event: message\ndata: %s\n\n' "${_shs_json}")
+    send_http_response "${_shs_body}" "${_shs_status}" "text/event-stream" "${_shs_sid}"
 }
 
-# Handle HTTP POST request for Streamable HTTP MCP transport
-# Usage: handle_http_post <request_body> [accept_header] [session_id_header]
 handle_http_post() {
-    local request_body="${1:-}"
-    local accept_header="${2:-application/json, text/event-stream}"
-    local req_session_id="${3:-}"
+    _hhp_body="${1:-}"
+    _hhp_accept="${2:-application/json, text/event-stream}"
+    _hhp_req_sid="${3:-}"
 
-    if ! printf '%s' "${request_body}" | jq -e . >/dev/null 2>&1; then
-        local err_resp
-        err_resp=$(json_response "null" "" "$(mcp_error -32700 "Parse error")")
-        send_http_response "${err_resp}" 400 "application/json"
+    if ! printf '%s' "${_hhp_body}" | jq -e . >/dev/null 2>&1; then
+        _hhp_err=$(json_response "null" "" "$(mcp_error -32700 "Parse error")")
+        send_http_response "${_hhp_err}" 400 "application/json"
         return 0
     fi
 
-    local json_message
-    json_message=$(extract_jsonrpc_from_post "${request_body}")
-    if [[ -z "${json_message}" ]]; then
-        local err_resp
-        err_resp=$(json_response "null" "" "$(mcp_error -32600 "Invalid JSON-RPC message")")
-        send_http_response "${err_resp}" 400 "application/json"
+    _hhp_msg=$(extract_jsonrpc_from_post "${_hhp_body}")
+    if [ -z "${_hhp_msg}" ]; then
+        _hhp_err=$(json_response "null" "" "$(mcp_error -32600 "Invalid JSON-RPC message")")
+        send_http_response "${_hhp_err}" 400 "application/json"
         return 0
     fi
 
-    # Validate session ID if server already assigned one and this is not initialize
-    local method
-    method=$(printf '%s' "${json_message}" | jq -r 'if type=="object" then (.method // "") else "" end' 2>/dev/null || echo "")
-    if [[ "${method}" == "initialize" && -z "${MCP_SESSION_ID}" ]]; then
+    _hhp_method=$(printf '%s' "${_hhp_msg}" | jq -r 'if type=="object" then (.method // "") else "" end' 2>/dev/null || echo "")
+    if [ "${_hhp_method}" = "initialize" ] && [ -z "${MCP_SESSION_ID}" ]; then
         MCP_SESSION_ID=$(mcp_generate_session_id)
-    elif [[ -n "${MCP_SESSION_ID}" && -n "${req_session_id}" && "${req_session_id}" != "${MCP_SESSION_ID}" ]]; then
-        local err_resp
-        err_resp=$(json_response "null" "" "$(mcp_error -32600 "Invalid or expired Mcp-Session-Id")")
-        send_http_response "${err_resp}" 404 "application/json"
+    elif [ -n "${MCP_SESSION_ID}" ] && [ -n "${_hhp_req_sid}" ] && [ "${_hhp_req_sid}" != "${MCP_SESSION_ID}" ]; then
+        _hhp_err=$(json_response "null" "" "$(mcp_error -32600 "Invalid or expired Mcp-Session-Id")")
+        send_http_response "${_hhp_err}" 404 "application/json"
         return 0
     fi
 
-    local response_payload
-    response_payload=$(mcp_dispatch_message "${json_message}")
+    _hhp_resp=$(mcp_dispatch_message "${_hhp_msg}")
 
-    # Notification or response-only payload -> 202 Accepted with no body per Streamable HTTP spec
-    if [[ -z "${response_payload}" ]]; then
+    if [ -z "${_hhp_resp}" ]; then
         send_http_response "" 202 "" "${MCP_SESSION_ID}"
         return 0
     fi
 
-    # If client explicitly prefers SSE stream and not application/json
-    if [[ "${accept_header}" == *"text/event-stream"* && "${accept_header}" != *"application/json"* ]]; then
-        send_http_sse_response "${response_payload}" 200 "${MCP_SESSION_ID}"
+    # Check if accept_header contains text/event-stream and NOT application/json using POSIX parameter expansion
+    if [ "${_hhp_accept#*text/event-stream}" != "${_hhp_accept}" ] && [ "${_hhp_accept#*application/json}" = "${_hhp_accept}" ]; then
+        send_http_sse_response "${_hhp_resp}" 200 "${MCP_SESSION_ID}"
     else
-        send_http_response "${response_payload}" 200 "application/json" "${MCP_SESSION_ID}"
+        send_http_response "${_hhp_resp}" 200 "application/json" "${MCP_SESSION_ID}"
     fi
 }
 
-# Handle HTTP GET request on MCP endpoint (SSE stream or 405)
 handle_http_get() {
-    local accept_header="${1:-}"
-    if [[ "${accept_header}" == *"text/event-stream"* ]]; then
-        send_http_response ": streamable-http sse stream open"$'\n\n' 200 "text/event-stream" "${MCP_SESSION_ID}"
+    _hhg_accept="${1:-}"
+    if [ "${_hhg_accept#*text/event-stream}" != "${_hhg_accept}" ]; then
+        _hhg_body="$(printf ': streamable-http sse stream open\n\n')"
+        send_http_response "${_hhg_body}" 200 "text/event-stream" "${MCP_SESSION_ID}"
     else
         send_http_response "" 405 "text/plain" "${MCP_SESSION_ID}"
     fi
 }
 
-# Handle HTTP DELETE request on MCP endpoint (session termination)
 handle_http_delete() {
-    local req_session_id="${1:-}"
-    if [[ -n "${MCP_SESSION_ID}" && -n "${req_session_id}" && "${req_session_id}" != "${MCP_SESSION_ID}" ]]; then
+    _hhd_req_sid="${1:-}"
+    if [ -n "${MCP_SESSION_ID}" ] && [ -n "${_hhd_req_sid}" ] && [ "${_hhd_req_sid}" != "${MCP_SESSION_ID}" ]; then
         send_http_response "" 404 "text/plain"
         return 0
     fi
@@ -619,50 +612,53 @@ handle_http_delete() {
     send_http_response "" 200 "text/plain"
 }
 
-# Parse a raw HTTP request from stdin and dispatch to POST/GET/DELETE handlers
 handle_http_request_stream() {
-    local request_line=""
-    if ! IFS= read -r request_line; then
+    _hhrs_req_line=""
+    if ! IFS= read -r _hhrs_req_line; then
         return 1
     fi
-    request_line="${request_line%$'\r'}"
-    [[ -z "${request_line}" ]] && return 1
+    _hhrs_req_line="${_hhrs_req_line%"${MCP_CR}"}"
+    if [ -z "${_hhrs_req_line}" ]; then
+        return 1
+    fi
 
-    local http_method http_path http_version
-    read -r http_method http_path http_version <<< "${request_line}"
+    # Extract method, path, and version using POSIX parameter expansion
+    _hhrs_method="${_hhrs_req_line%% *}"
+    _hhrs_rest="${_hhrs_req_line#* }"
+    _hhrs_path="${_hhrs_rest%% *}"
 
-    local content_length=0
-    local accept_header="application/json, text/event-stream"
-    local session_header=""
-    local header_line
-    while IFS= read -r header_line; do
-        header_line="${header_line%$'\r'}"
-        [[ -z "${header_line}" ]] && break
-        local h_name h_val
-        h_name=$(printf '%s' "${header_line%%:*}" | tr '[:upper:]' '[:lower:]')
-        h_val="${header_line#*:}"
-        h_val="${h_val#" "}"
-        case "${h_name}" in
-            content-length) content_length="${h_val}" ;;
-            accept)         accept_header="${h_val}" ;;
-            mcp-session-id) session_header="${h_val}" ;;
+    _hhrs_clen=0
+    _hhrs_accept="application/json, text/event-stream"
+    _hhrs_session=""
+    while IFS= read -r _hhrs_hline; do
+        _hhrs_hline="${_hhrs_hline%"${MCP_CR}"}"
+        if [ -z "${_hhrs_hline}" ]; then
+            break
+        fi
+        _hhrs_hname=$(printf '%s' "${_hhrs_hline%%:*}" | tr '[:upper:]' '[:lower:]')
+        _hhrs_hval="${_hhrs_hline#*:}"
+        _hhrs_hval="${_hhrs_hval#" "}"
+        case "${_hhrs_hname}" in
+            content-length) _hhrs_clen="${_hhrs_hval}" ;;
+            accept)         _hhrs_accept="${_hhrs_hval}" ;;
+            mcp-session-id) _hhrs_session="${_hhrs_hval}" ;;
         esac
     done
 
-    local body=""
-    if [[ "${content_length}" -gt 0 ]]; then
-        body=$(dd bs=1 count="${content_length}" 2>/dev/null || true)
+    _hhrs_body=""
+    if [ "${_hhrs_clen}" -gt 0 ]; then
+        _hhrs_body=$(dd bs=1 count="${_hhrs_clen}" 2>/dev/null || true)
     fi
 
-    case "${http_method}" in
+    case "${_hhrs_method}" in
         POST)
-            handle_http_post "${body}" "${accept_header}" "${session_header}"
+            handle_http_post "${_hhrs_body}" "${_hhrs_accept}" "${_hhrs_session}"
             ;;
         GET)
-            handle_http_get "${accept_header}"
+            handle_http_get "${_hhrs_accept}"
             ;;
         DELETE)
-            handle_http_delete "${session_header}"
+            handle_http_delete "${_hhrs_session}"
             ;;
         *)
             send_http_response "" 405 "text/plain"
@@ -670,45 +666,43 @@ handle_http_request_stream() {
     esac
 }
 
-# Run Streamable HTTP server loop
-# Supports single-request stdio HTTP framing or listening on a TCP port via nc/socat
 mcp_streamable_http_server() {
-    local port="${1:-${MCP_HTTP_PORT:-8080}}"
-    local host="${2:-${MCP_HTTP_HOST:-127.0.0.1}}"
+    _mshs_port="${1:-${MCP_HTTP_PORT:-8080}}"
+    _mshs_host="${2:-${MCP_HTTP_HOST:-127.0.0.1}}"
 
-    # If stdin is a pipe/file with HTTP data already piped in, process it directly
-    if [[ ! -t 0 ]] && [[ "${MCP_HTTP_LISTEN:-false}" != "true" ]]; then
-        local first_line=""
-        if IFS= read -r -t 1 first_line; then
-            local stripped="${first_line%$'\r'}"
-            if [[ "${stripped}" =~ ^(POST|GET|DELETE|OPTIONS|HEAD)[[:space:]] ]]; then
-                { printf '%s\r\n' "${stripped}"; cat; } | handle_http_request_stream
-                return 0
-            elif [[ -n "${stripped}" ]]; then
-                # Raw JSON body passed to streamable-http handler
-                local full_body
-                full_body=$(printf '%s\n' "${stripped}"; cat)
-                handle_http_post "${full_body}"
-                return 0
-            fi
+    if [ ! -t 0 ] && [ "${MCP_HTTP_LISTEN:-false}" != "true" ]; then
+        _mshs_first=""
+        if IFS= read -r _mshs_first; then
+            _mshs_stripped="${_mshs_first%"${MCP_CR}"}"
+            case "${_mshs_stripped}" in
+                "POST "*|"GET "*|"DELETE "*|"OPTIONS "*|"HEAD "*)
+                    { printf '%s\r\n' "${_mshs_stripped}"; cat; } | handle_http_request_stream
+                    return 0
+                    ;;
+                *)
+                    if [ -n "${_mshs_stripped}" ]; then
+                        _mshs_full=$(printf '%s\n' "${_mshs_stripped}"; cat)
+                        handle_http_post "${_mshs_full}"
+                        return 0
+                    fi
+                    ;;
+            esac
         fi
     fi
 
-    # Otherwise, start TCP listener using socat or netcat if available
     if command -v socat >/dev/null 2>&1; then
-        socat TCP-LISTEN:"${port}",bind="${host}",reuseaddr,fork EXEC:"${0} --http-worker" &
+        socat TCP-LISTEN:"${_mshs_port}",bind="${_mshs_host}",reuseaddr,fork EXEC:"sh ${0} --http-worker" &
         MCP_HTTP_SERVER_PID=$!
         wait "${MCP_HTTP_SERVER_PID}"
     elif command -v nc >/dev/null 2>&1; then
-        local fifo_path
-        fifo_path="$(mktemp -u "${TMPDIR:-/tmp}/mcp_http_fifo.XXXXXX")"
-        mkfifo "${fifo_path}"
-        MCP_TEMP_FILES+=("${fifo_path}")
+        _mshs_fifo="$(mktemp -u "${TMPDIR:-/tmp}/mcp_http_fifo.XXXXXX")"
+        mkfifo "${_mshs_fifo}"
+        mcp_register_temp_file "${_mshs_fifo}"
         while true; do
-            handle_http_request_stream < "${fifo_path}" | nc -l "${host}" "${port}" > "${fifo_path}" || break
+            handle_http_request_stream < "${_mshs_fifo}" | nc -l "${_mshs_host}" "${_mshs_port}" > "${_mshs_fifo}" || break
         done
     else
-        echo "ERROR: Neither socat nor nc found to bind TCP port ${port} for streamable-http" >&2
+        echo "ERROR: Neither socat nor nc found to bind TCP port ${_mshs_port} for streamable-http" >&2
         return 1
     fi
 }
@@ -717,18 +711,13 @@ mcp_http_server() {
     mcp_streamable_http_server "$@"
 }
 
-# --- Transport mode detection -----------------------------------------------
 get_transport_mode() {
     echo "${MCP_TRANSPORT:-stdio}"
 }
 
-# --- Main entry point -------------------------------------------------------
-# Usage: ./mcp-sdk.sh [--stdio] [--http|--streamable-http] [--port PORT]
-# When sourced by another script, no transport is started automatically.
 mcp_main() {
-    local mode
-    mode=$(get_transport_mode)
-    case "${mode}" in
+    _mm_mode=$(get_transport_mode)
+    case "${_mm_mode}" in
         http|streamable-http)
             mcp_streamable_http_server "${MCP_HTTP_PORT:-8080}" "${MCP_HTTP_HOST:-127.0.0.1}"
             ;;
@@ -738,34 +727,38 @@ mcp_main() {
     esac
 }
 
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --stdio)
-                export MCP_TRANSPORT="stdio"
-                ;;
-            --http|--streamable-http)
-                export MCP_TRANSPORT="streamable-http"
-                ;;
-            --listen)
-                export MCP_HTTP_LISTEN="true"
-                ;;
-            --http-worker)
-                handle_http_request_stream
-                exit 0
-                ;;
-            --port)
+if [ "${MCP_SDK_SOURCED:-false}" != "true" ]; then
+    case "${0##*/}" in
+        mcp-sdk.sh|mcp-sdk)
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --stdio)
+                        export MCP_TRANSPORT="stdio"
+                        ;;
+                    --http|--streamable-http)
+                        export MCP_TRANSPORT="streamable-http"
+                        ;;
+                    --listen)
+                        export MCP_HTTP_LISTEN="true"
+                        ;;
+                    --http-worker)
+                        handle_http_request_stream
+                        exit 0
+                        ;;
+                    --port)
+                        shift
+                        export MCP_HTTP_PORT="${1:-8080}"
+                        ;;
+                    --host)
+                        shift
+                        export MCP_HTTP_HOST="${1:-127.0.0.1}"
+                        ;;
+                    *)
+                        ;;
+                esac
                 shift
-                export MCP_HTTP_PORT="${1:-8080}"
-                ;;
-            --host)
-                shift
-                export MCP_HTTP_HOST="${1:-127.0.0.1}"
-                ;;
-            *)
-                ;;
-        esac
-        shift
-    done
-    mcp_main
+            done
+            mcp_main
+            ;;
+    esac
 fi

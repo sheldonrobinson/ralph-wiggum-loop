@@ -5,7 +5,10 @@ license: MIT
 compatibility: Windows requires PowerShell 5.1+ or pwsh 7+ and jq. Linux/macOS requires Bash 4+, jq, and socat or nc (for streamable-http).
 metadata:
   author: sheldonrobinson
+  author-email: sheldon.robinson@gmail.com
+  author-url: https://github.com/sheldonrobinson
   version: "1.1.0"
+  homepage: https://sheldonrobinson.github.io/ralph-wiggum-loop
   repository: https://github.com/sheldonrobinson/ralph-wiggum-loop
 ---
 

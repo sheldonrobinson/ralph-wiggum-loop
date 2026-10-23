@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "ralph-wiggum-loop",
   "version": "1.1.0",
-  "description": "Multi-model iterative development agent plugin — Ralph Loop with cross-model worker/reviewer architecture, spec-driven development skills, Stop hooks, and SHIP/REVISE decision engine.",
+  "description": "Multi-model iterative development agent plugin - Ralph Loop with cross-model worker/reviewer architecture, spec-driven development skills, Stop hooks, and SHIP/REVISE decision engine.",
   "author": {
     "name": "sheldonrobinson",
     "email": "sheldon.robinson@gmail.com",
@@ -25,12 +25,12 @@
     "self-improvement"
   ],
   "extensions": {
-    "com.anthropic.claude-code": {
-      "hooks": "./com.anthropic.claude-code/hooks/hooks.json",
+    "io.github.sheldonrobinson.ralph-wiggum-loop": {
+      "hooks": "./io.github.sheldonrobinson.ralph-wiggum-loop/hooks/hooks.json",
       "commands": [
-        "./com.anthropic.claude-code/commands/ralph-loop.md",
-        "./com.anthropic.claude-code/commands/cancel-ralph.md",
-        "./com.anthropic.claude-code/commands/help.md"
+        "./io.github.sheldonrobinson.ralph-wiggum-loop/commands/ralph-loop.md",
+        "./io.github.sheldonrobinson.ralph-wiggum-loop/commands/cancel-ralph.md",
+        "./io.github.sheldonrobinson.ralph-wiggum-loop/commands/help.md"
       ]
     }
   }

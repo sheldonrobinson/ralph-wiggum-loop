@@ -44,7 +44,7 @@ A two-phase iterative workflow where a **worker** model implements the task and 
 - **Cross-Platform Polyglot Script Runner (`bin/script-runner`)**: Single polyglot runner valid in both POSIX `sh`/`bash` and PowerShell (`pwsh` / `powershell.exe`) that automatically dispatches to `.sh` on Linux/macOS and `.ps1` on Windows.
 - **Generic `shebang-mcp-sdk` (`bin/mcp-sdk.sh` & `bin/mcp-sdk.psm1`)**: Full JSON-RPC 2.0 MCP implementation supporting both **`stdio`** and **`streamable-http`** (`POST`, `GET` SSE `text/event-stream`, `DELETE`, `Mcp-Session-Id`) transports with deterministic on-exit cleanup handlers.
 - **11 MCP Tools**: Complete workflow control (`ralph_loop_initialize`, `ralph_loop_get_task`, `ralph_loop_submit_work`, `ralph_loop_get_work`, `ralph_loop_submit_review`, `ralph_loop_get_feedback`, `ralph_loop_get_status`, `ralph_loop_get_config`, `ralph_loop_reset`, `ralph_loop_block`, and `ralph_loop_run`).
-- **In-Session Stop Hooks (`com.anthropic.claude-code/hooks/`)**: Cross-platform `stop-hook.sh` and `stop-hook.ps1` that block premature session exit until `<promise>DONE</promise>` or `SHIP` is reached.
+- **In-Session Stop Hooks (`io.github.sheldonrobinson.ralph-wiggum-loop/hooks/`)**: Cross-platform `stop-hook.sh` and `stop-hook.ps1` that block premature session exit until `<promise>DONE</promise>` or `SHIP` is reached.
 - **5 Quality Profiles**: `lite`, `plus`, `pro`, `super`, `ultra` with adaptive profile switching and rate-limit backoff.
 
 ## Quick Start

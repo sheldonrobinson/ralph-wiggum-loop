@@ -1,28 +1,29 @@
-#!/usr/bin/env bash
-# Ralph Wiggum Loop — Streamable HTTP Service Manager (Linux / macOS - Bash)
+#!/usr/bin/env sh
+# Ralph Wiggum Loop - Streamable HTTP Service Manager (Linux / macOS - POSIX sh)
 # Starts, stops, or checks the status of the Streamable HTTP MCP server.
 
-set -euo pipefail
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 resolve_plugin_root() {
-  if [[ -n "${PLUGIN_ROOT:-}" && -f "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.sh" ]]; then
+  if [ -n "${PLUGIN_ROOT:-}" ] && [ -f "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.sh" ]; then
     printf '%s\n' "${PLUGIN_ROOT}"
     return 0
   fi
-  local cand
   for cand in \
     "$(cd "${SCRIPT_DIR}/../../.." 2>/dev/null && pwd || true)" \
     "$(cd "${SCRIPT_DIR}/../../../.." 2>/dev/null && pwd || true)" \
     "$(pwd)"
   do
-    if [[ -n "${cand}" && -f "${cand}/bin/ralph-wiggum-loop.sh" ]]; then
+    if [ -n "${cand}" ] && [ -f "${cand}/bin/ralph-wiggum-loop.sh" ]; then
       printf '%s\n' "${cand}"
       return 0
     fi
   done
   cd "${SCRIPT_DIR}/../../.." && pwd
 }
+
 PLUGIN_ROOT="$(resolve_plugin_root)"
 SERVER_SCRIPT="${PLUGIN_ROOT}/bin/ralph-wiggum-loop.sh"
 
@@ -34,7 +35,7 @@ STATE_DIR="${PLUGIN_DATA:-${PLUGIN_ROOT}/.ralph}"
 PID_FILE="${STATE_DIR}/ralph-http-server.pid"
 LOG_FILE="${STATE_DIR}/ralph-http-server.log"
 
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
   case "$1" in
     start|stop|status|foreground)
       ACTION="$1"
@@ -54,7 +55,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       cat << 'EOF'
-Ralph Wiggum Loop — Streamable HTTP Service Manager (Linux/macOS)
+Ralph Wiggum Loop - Streamable HTTP Service Manager (Linux/macOS)
 
 USAGE:
   ./skills/ralph-wiggum-loop/scripts/start-http-server.sh [start|stop|status|foreground] [OPTIONS]
@@ -83,10 +84,9 @@ done
 mkdir -p "${STATE_DIR}"
 
 check_pid_running() {
-  if [[ -f "${PID_FILE}" ]]; then
-    local pid
+  if [ -f "${PID_FILE}" ]; then
     pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
       echo "${pid}"
       return 0
     fi
@@ -102,7 +102,7 @@ case "${ACTION}" in
     export MCP_HTTP_ENDPOINT="${ENDPOINT}"
     export MCP_HTTP_LISTEN="true"
     echo "Starting Ralph Wiggum Loop Streamable HTTP server (foreground) at http://${HOST}:${PORT}${ENDPOINT} ..."
-    exec "${SERVER_SCRIPT}" --streamable-http --host "${HOST}" --port "${PORT}" --listen
+    exec sh "${SERVER_SCRIPT}" --streamable-http --host "${HOST}" --port "${PORT}" --listen
     ;;
 
   start)
@@ -123,7 +123,7 @@ case "${ACTION}" in
     export MCP_HTTP_ENDPOINT="${ENDPOINT}"
     export MCP_HTTP_LISTEN="true"
 
-    nohup "${SERVER_SCRIPT}" --streamable-http --host "${HOST}" --port "${PORT}" --listen \
+    nohup sh "${SERVER_SCRIPT}" --streamable-http --host "${HOST}" --port "${PORT}" --listen \
       </dev/null >>"${LOG_FILE}" 2>&1 &
     new_pid=$!
     echo "${new_pid}" > "${PID_FILE}"
@@ -136,7 +136,7 @@ case "${ACTION}" in
 
   status)
     if running_pid="$(check_pid_running)"; then
-      echo "RUNNING (PID: ${running_pid}) — http://${HOST}:${PORT}${ENDPOINT}"
+      echo "RUNNING (PID: ${running_pid}) - http://${HOST}:${PORT}${ENDPOINT}"
       exit 0
     else
       echo "STOPPED"

@@ -1,8 +1,6 @@
 ---
 description: "Start a Ralph Wiggum iterative loop in the current session (Linux/macOS Bash or Windows PowerShell)"
 argument-hint: "PROMPT [--max-iterations N] [--completion-promise TEXT]"
-allowed-tools: ["Bash(${PLUGIN_ROOT}/bin/script-runner.sh:*)", "Bash(pwsh -NoProfile -ExecutionPolicy Bypass -File ${PLUGIN_ROOT}/bin/script-runner.ps1:*)", "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${PLUGIN_ROOT}/bin/script-runner.ps1:*)"]
-hide-from-slash-command-tool: "true"
 ---
 
 # Ralph Loop Command
@@ -14,23 +12,23 @@ The Ralph Wiggum Loop uses **Bash on Linux/macOS** and **PowerShell on Windows**
 - **Linux / macOS (Bash):**
   - Initialize in-session state (`.agents/ralph-loop.local.md`):
     ```bash
-    "${PLUGIN_ROOT}/bin/script-runner.sh" setup-ralph-loop $ARGUMENTS
+    "${PLUGIN_ROOT:-.}/bin/script-runner.sh" setup-ralph-loop $ARGUMENTS
     ```
   - Or run the full multi-model loop via CLI:
     ```bash
-    "${PLUGIN_ROOT}/bin/script-runner.sh" ralph-wiggum-loop $ARGUMENTS
+    "${PLUGIN_ROOT:-.}/bin/script-runner.sh" ralph-wiggum-loop $ARGUMENTS
     ```
-  - MCP Server (`mcp.json`): Use `ralph-wiggum-loop` (`stdio`) or `ralph-wiggum-loop-http` (`streamable-http`).
+  - MCP Server (`mcp.json`): Use `ralph-wiggum-loop` / `ralph-wiggum-loop-sh` (`stdio`) or `ralph-wiggum-loop-http` (`streamable-http`).
 
 - **Windows (PowerShell):**
   - Initialize in-session state (`.agents/ralph-loop.local.md`):
     ```powershell
-    pwsh -NoProfile -ExecutionPolicy Bypass -File "${PLUGIN_ROOT}/bin/script-runner.ps1" setup-ralph-loop $ARGUMENTS
+    pwsh -NoProfile -ExecutionPolicy Bypass -File .\bin\script-runner.ps1 setup-ralph-loop $ARGUMENTS
     ```
     *(If `pwsh` is unavailable, use `powershell.exe`.)*
   - Or run the full multi-model loop via CLI:
     ```powershell
-    pwsh -NoProfile -ExecutionPolicy Bypass -File "${PLUGIN_ROOT}/bin/script-runner.ps1" ralph-wiggum-loop $ARGUMENTS
+    pwsh -NoProfile -ExecutionPolicy Bypass -File .\bin\script-runner.ps1 ralph-wiggum-loop $ARGUMENTS
     ```
   - MCP Server (`mcp.json`): Use `ralph-wiggum-loop-pwsh` (PowerShell 7+), `ralph-wiggum-loop-powershell` (Windows PowerShell 5.1), or `ralph-wiggum-loop-http` (`streamable-http`).
 

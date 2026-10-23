@@ -1,19 +1,26 @@
 #Requires -Version 5.1
-# Ralph Wiggum Loop Stop Hook (PowerShell)
+# Ralph Wiggum Loop Stop Hook (PowerShell - Agent-Harness Agnostic)
 # Prevents session exit when a Ralph loop is active and completion criteria are not yet met.
+# Supports:
+#   1. In-session state file (.agents/ralph-loop.local.md) with <promise>...</promise>
+#   2. Multi-model MCP session state (.ralph/<session>/state.json or ${PLUGIN_DATA}/state/<session>/state.json)
+#   3. Any agent harness hook payload (inline message/output/response/content fields, transcript_path JSON/JSONL, or plain text stdin)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$HookInput = ''
-if ([Console]::IsInputRedirected) {
-    $HookInput = [Console]::In.ReadToEnd()
+$pipedLines = @($input)
+$HookInput = if ($pipedLines.Count -gt 0) {
+    $pipedLines -join "`n"
+}
+elseif ([Console]::IsInputRedirected) {
+    [Console]::In.ReadToEnd()
+}
+else {
+    ''
 }
 
 $RalphStateFile = if ($env:RALPH_LOCAL_STATE_FILE) { $env:RALPH_LOCAL_STATE_FILE } else { '.agents/ralph-loop.local.md' }
-if (-not (Test-Path -LiteralPath $RalphStateFile) -and (Test-Path -LiteralPath '.claude/ralph-loop.local.md')) {
-    $RalphStateFile = '.claude/ralph-loop.local.md'
-}
 $RalphMcpStateBase = if ($env:RALPH_STATE_BASE) {
     $env:RALPH_STATE_BASE
 }
@@ -24,31 +31,69 @@ else {
     '.ralph'
 }
 
-function Get-LastAssistantText {
-    param([string]$HookJson)
-    if ([string]::IsNullOrWhiteSpace($HookJson)) { return '' }
-    try {
-        $hookObj = $HookJson | ConvertFrom-Json -ErrorAction Stop
-        $transcriptPath = if ($hookObj.PSObject.Properties['transcript_path']) { [string]$hookObj.transcript_path } else { '' }
-        if ([string]::IsNullOrWhiteSpace($transcriptPath) -or -not (Test-Path -LiteralPath $transcriptPath)) {
-            return ''
+function Convert-ContentToText {
+    param($ContentValue)
+    if ($null -eq $ContentValue) { return '' }
+    if ($ContentValue -is [string]) { return $ContentValue }
+    if ($ContentValue -is [System.Collections.IEnumerable]) {
+        $parts = foreach ($item in $ContentValue) {
+            if ($null -eq $item) { continue }
+            if ($item -is [string]) { $item }
+            elseif ($item.PSObject.Properties['text']) { [string]$item.text }
+            elseif ($item.PSObject.Properties['content']) { [string]$item.content }
         }
-        $lines = Get-Content -LiteralPath $transcriptPath -ErrorAction Stop | Where-Object { $_ -match '"role"\s*:\s*"assistant"' }
-        if (-not $lines) { return '' }
-        $lastLine = @($lines)[-1]
-        $msgObj = $lastLine | ConvertFrom-Json -ErrorAction Stop
-        $content = $msgObj.message.content
-        if ($content -is [string]) { return $content }
-        if ($content -is [System.Collections.IEnumerable]) {
-            $texts = foreach ($item in $content) {
-                if ($null -ne $item -and $item.PSObject.Properties['type'] -and $item.type -eq 'text') {
-                    [string]$item.text
+        return ($parts -join "`n")
+    }
+    if ($ContentValue.PSObject.Properties['text']) { return [string]$ContentValue.text }
+    if ($ContentValue.PSObject.Properties['content']) { return (Convert-ContentToText $ContentValue.content) }
+    return ''
+}
+
+function Get-LastAssistantText {
+    param([string]$HookPayload)
+    if ([string]::IsNullOrWhiteSpace($HookPayload)) {
+        if ($env:RALPH_LAST_OUTPUT) { return [string]$env:RALPH_LAST_OUTPUT }
+        return ''
+    }
+    try {
+        $hookObj = $HookPayload | ConvertFrom-Json -ErrorAction Stop
+        if ($hookObj -is [string]) { return $hookObj }
+
+        foreach ($field in @('last_assistant_message', 'assistant_message', 'output', 'response', 'text', 'content', 'message')) {
+            if ($hookObj.PSObject.Properties[$field] -and $null -ne $hookObj.$field) {
+                $extracted = Convert-ContentToText $hookObj.$field
+                if (-not [string]::IsNullOrWhiteSpace($extracted)) {
+                    return $extracted
                 }
             }
-            return ($texts -join "`n")
+        }
+
+        $transcriptPath = ''
+        foreach ($pathField in @('transcript_path', 'transcriptPath', 'session_log', 'log_path')) {
+            if ($hookObj.PSObject.Properties[$pathField] -and $hookObj.$pathField) {
+                $transcriptPath = [string]$hookObj.$pathField
+                break
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($transcriptPath) -and (Test-Path -LiteralPath $transcriptPath)) {
+            $lines = Get-Content -LiteralPath $transcriptPath -ErrorAction Stop | Where-Object { $_ -match '"role"\s*:\s*"assistant"' }
+            if ($lines) {
+                $lastLine = @($lines)[-1]
+                $msgObj = $lastLine | ConvertFrom-Json -ErrorAction Stop
+                if ($msgObj.PSObject.Properties['message']) {
+                    return (Convert-ContentToText $msgObj.message)
+                }
+                if ($msgObj.PSObject.Properties['content']) {
+                    return (Convert-ContentToText $msgObj.content)
+                }
+            }
+            return (Get-Content -LiteralPath $transcriptPath -Raw -ErrorAction SilentlyContinue)
         }
     }
-    catch {}
+    catch {
+        return $HookPayload
+    }
     return ''
 }
 
@@ -72,7 +117,7 @@ if (Test-Path -LiteralPath $RalphStateFile) {
             exit 0
         }
 
-        $lastOutput = Get-LastAssistantText -HookJson $HookInput
+        $lastOutput = Get-LastAssistantText -HookPayload $HookInput
         if ($completionPromise -and $completionPromise -ne 'null' -and $lastOutput) {
             if ($lastOutput.Contains("<promise>$completionPromise</promise>")) {
                 Remove-Item -LiteralPath $RalphStateFile -Force -ErrorAction SilentlyContinue
@@ -97,7 +142,8 @@ if (Test-Path -LiteralPath $RalphStateFile) {
             reason        = $promptText
             systemMessage = $sysMsg
         } | ConvertTo-Json -Compress
-        Write-Output $resp
+        [System.Console]::Out.WriteLine($resp)
+        [System.Console]::Out.Flush()
         exit 0
     }
 }
@@ -122,7 +168,8 @@ if (Test-Path -LiteralPath $RalphMcpStateBase) {
                     reason        = $reason
                     systemMessage = "Ralph MCP Loop ($sessionId) iteration $iter/$maxIter [$phase] - Complete review with SHIP to finish."
                 } | ConvertTo-Json -Compress
-                Write-Output $resp
+                [System.Console]::Out.WriteLine($resp)
+                [System.Console]::Out.Flush()
                 exit 0
             }
         }

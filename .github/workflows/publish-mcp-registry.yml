@@ -1,0 +1,121 @@
+name: Build & Publish to Official MCP Registry
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., 1.1.0). Defaults to plugin.json version or git tag."
+        required: false
+        type: string
+      publish_registry:
+        description: "Publish to Official MCP Registry via mcp-publisher"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-and-publish:
+    name: Build Multi-Package MCPB & Publish to MCP Registry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine release version and tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ github.event.inputs.version }}" ]]; then
+            RAW_VER="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            RAW_VER="${GITHUB_REF_NAME}"
+          elif [[ -n "${{ github.event.release.tag_name }}" ]]; then
+            RAW_VER="${{ github.event.release.tag_name }}"
+          else
+            RAW_VER="$(jq -r '.version // "1.1.0"' plugin.json)"
+          fi
+          VERSION="${RAW_VER#v}"
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved version=${VERSION} (tag=${TAG})"
+
+      - name: Build Bash & PowerShell MCPB bundles and update server.json
+        shell: bash
+        run: |
+          chmod +x ./bin/script-runner ./bin/script-runner.sh ./bin/package-mcpb.sh
+          ./bin/script-runner.sh package-mcpb --version "${{ steps.meta.outputs.version }}"
+          ls -lh dist/
+          cat server.json
+
+      - name: Upload MCPB artifacts to workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: ralph-wiggum-loop-mcpb-${{ steps.meta.outputs.tag }}
+          path: |
+            dist/ralph-wiggum-loop.sh.mcpb
+            dist/ralph-wiggum-loop.pwsh.mcpb
+            server.json
+
+      - name: Create or update GitHub Release with MCPB bundles
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Uploading MCPB bundles to existing release ${TAG}..."
+            gh release upload "${TAG}" \
+              dist/ralph-wiggum-loop.sh.mcpb \
+              dist/ralph-wiggum-loop.pwsh.mcpb \
+              server.json \
+              --clobber
+          else
+            echo "Creating GitHub release ${TAG} and uploading MCPB bundles..."
+            gh release create "${TAG}" \
+              dist/ralph-wiggum-loop.sh.mcpb \
+              dist/ralph-wiggum-loop.pwsh.mcpb \
+              server.json \
+              --title "${TAG}" \
+              --generate-notes
+          fi
+
+      - name: Install mcp-publisher CLI
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_registry == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCH="$(uname -m)"
+          case "${ARCH}" in
+            x86_64|amd64) MCP_ARCH="amd64" ;;
+            aarch64|arm64) MCP_ARCH="arm64" ;;
+            *) echo "Unsupported architecture: ${ARCH}" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_${MCP_ARCH}.tar.gz" \
+            | tar xz -C /usr/local/bin mcp-publisher
+          chmod +x /usr/local/bin/mcp-publisher
+          mcp-publisher --version || true
+
+      - name: Authenticate with Official MCP Registry (GitHub OIDC)
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_registry == true }}
+        shell: bash
+        run: |
+          mcp-publisher login github-oidc
+
+      - name: Publish server.json to Official MCP Registry
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_registry == true }}
+        shell: bash
+        run: |
+          mcp-publisher publish

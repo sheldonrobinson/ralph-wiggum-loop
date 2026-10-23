@@ -45,7 +45,7 @@ ralph-wiggum-loop/
 |       +-- setup-ralph-loop.{sh,ps1}   # Initialize .agents/ralph-loop.local.md
 |       +-- start-http-server.{sh,ps1}  # Manage streamable-http MCP service
 +-- skills/ralph-wiggum-loop/           # Agent Plugins v1.0.0 fixed skill discovery mirror
-+-- com.anthropic.claude-code/          # Client extension hooks & slash commands
++-- io.github.sheldonrobinson.ralph-wiggum-loop/          # Client extension hooks & slash commands
 |   +-- hooks/
 |   |   +-- hooks.json
 |   |   +-- stop-hook.{sh,ps1}
