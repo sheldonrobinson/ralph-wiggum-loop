@@ -72,7 +72,7 @@ Copy-Item -Recurse -Force skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-l
 
 ## Documentation
 
-- [Skill & Agent Instructions](./.agents/skills/ralph-wiggum-loop/SKILL.md) — OS selection rules, loop execution modes, and Streamable HTTP setup
+- [Skill & Agent Instructions](./skills/ralph-wiggum-loop/SKILL.md) — OS selection rules, loop execution modes, and Streamable HTTP setup
 - [Full Documentation](./docs/README.md) — API reference, tools, state management
 - [Deployment Guide](https://sheldonrobinson.github.io/ralph-wiggum-loop/deploy) — Install and configure
 
