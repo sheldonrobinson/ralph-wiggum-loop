@@ -5,7 +5,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Agent Plugin](https://img.shields.io/badge/Agent--Plugins-v1.0.0-blue)](https://agent-plugins.org)
 [![GitHub Pages](https://github.com/sheldonrobinson/ralph-wiggum-loop/actions/workflows/pages.yml/badge.svg)](https://sheldonrobinson.github.io/ralph-wiggum-loop)
-[![Ralph Wiggum Loop MCP server](https://mcprush.com/badge/ralph-wiggum-loop-mcp/card.svg)](https://mcprush.com/to/ralph-wiggum-loop-mcp?ref=badge)
 
 ## Overview
 
@@ -29,6 +28,7 @@ cp -R skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-loop
 New-Item -ItemType Directory -Path .agents/skills -Force | Out-Null
 Copy-Item -Recurse -Force skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-loop
 ```
+[![Ralph Wiggum Loop MCP server](https://mcprush.com/badge/ralph-wiggum-loop-mcp/card.svg)](https://mcprush.com/to/ralph-wiggum-loop-mcp?ref=badge)
 
 ## OS-Specific MCP Servers (`mcp.json`)
 
