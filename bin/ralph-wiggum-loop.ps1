@@ -83,31 +83,99 @@ $script:MonitorModel = Coalesce $env:RALPH_MONITOR_MODEL ''
 $script:MonitorProvider = Coalesce $env:RALPH_MONITOR_PROVIDER (Coalesce $env:RALPH_MONITON_PROVIDER '')
 $script:MonitorAgent = Coalesce $env:RALPH_MONITOR_AGENT 'goose'
 
+# AI Harness Model Catalog - Dynamic model profiles based on underlying AI harness
+# Each entry: @{ model = 'model-name'; provider = 'provider-name' }
+    # AI Harness Model Catalog - Dynamic model profiles based on underlying AI harness
+    # Each entry: @{ model = 'model-name'; provider = 'provider-name'; tier = 'lite|plus|pro|ultra' }
+    $script:HarnessModelCatalog = @{
+        'anthropic/claude'   = @(
+            @{ model='fable-5-2'; provider='anthropic'; tier='ultra' },
+            @{ model='opus-5-5'; provider='anthropic'; tier='pro' },
+            @{ model='sonnet-5-5'; provider='anthropic'; tier='plus' },
+            @{ model='haiku-5-5'; provider='anthropic'; tier='lite' }
+        )
+        'openai/codex'       = @(
+            @{ model='gpt-6.2-astra'; provider='openai'; tier='ultra' },
+            @{ model='gpt-6.2-sol'; provider='openai'; tier='pro' },
+            @{ model='gpt-6.1-terra'; provider='openai'; tier='plus' },
+            @{ model='gpt-6-luna'; provider='openai'; tier='lite' }
+        )
+        'gemini/antigravity' = @(
+            @{ model='gemini-4-carbon'; provider='google'; tier='ultra' },
+            @{ model='gemini-4-neon'; provider='google'; tier='pro' },
+            @{ model='gemini-4-argon'; provider='google'; tier='plus' },
+            @{ model='gemini-4-hydrogen'; provider='google'; tier='lite' }        
+        )
+        'copilot/copilot'    = @(
+            @{ model='kimi-k3.1-pro'; provider='copilot'; tier='ultra' },
+            @{ model='deepseek-v4.1-flash-1017'; provider='copilot'; tier='pro' },
+            @{ model='phi-4-reasoning'; provider='copilot'; tier='plus' },
+            @{ model='phi-4-mini-reasoning'; provider='copilot'; tier='lite' }
+        )
+        'goose/goose'        = @(
+            @{ model='nvidia-nemotron-3-ultra-550b-a55b'; provider='NVIDIA'; tier='ultra' },
+            @{ model='nvidia-nemotron-3_5-super-vl-120b-a12b'; provider='NVIDIA'; tier='pro' },
+            @{ model='nvidia-nemotron-3-5-lightning-30b-a3b'; provider='NVIDIA'; tier='plus' },
+            @{ model='nvidia-nemotron-3_5-bolt-e4b'; provider='NVIDIA'; tier='lite' }
+        )
+    }
+
 $script:CurrentProfile = ''
 $script:CLITask = ''
 $script:CLISessionId = ''
 
-# Profile support via environment variable
-if ($env:RALPH_PROFILE -and (Test-Path $env:RALPH_PROFILE)) {
-    try {
-        $profile = Get-Content $env:RALPH_PROFILE -Raw | ConvertFrom-Json
-        if ($profile.workerModel)      { $script:WorkerModel = $profile.workerModel }
-        if ($profile.workerProvider)   { $script:WorkerProvider = $profile.workerProvider }
-        if ($profile.workerAgent)      { $script:WorkerAgent = $profile.workerAgent }
-        if ($profile.reviewerModel)    { $script:ReviewerModel = $profile.reviewerModel }
-        if ($profile.reviewerProvider) { $script:ReviewerProvider = $profile.reviewerProvider }
-        if ($profile.reviewerAgent)    { $script:ReviewerAgent = $profile.reviewerAgent }
-        if ($profile.monitorModel)     { $script:MonitorModel = $profile.monitorModel }
-        if ($profile.monitorProvider)  { $script:MonitorProvider = $profile.monitorProvider }
-        if ($profile.monitorAgent)     { $script:MonitorAgent = $profile.monitorAgent }
-        if ($profile.maxIterations)    { $script:MaxIterations = [int]$profile.maxIterations }
-        if ($profile.workGuidelines)   { $script:WorkGuidelines = $profile.workGuidelines }
-        if ($profile.reviewGuidelines) { $script:ReviewGuidelines = $profile.reviewGuidelines }
+# Profile support via environment variable - now supports dynamic harness profiles
+if ($env:RALPH_PROFILE) {
+    $profileName = $env:RALPH_PROFILE
+    
+    # First, check if it's a harness name in our catalog
+    if ($script:HarnessModelCatalog.ContainsKey($profileName)) {
+        # Use first model from the harness as default (models are objects with model/provider)
+        $models = $script:HarnessModelCatalog[$profileName]
+        $firstModel = $models[0]
+        $secondModel = if ($models.Count -gt 1) { $models[1] } else { $models[0] }
+        
+        $script:WorkerModel = $firstModel.model
+        $script:WorkerProvider = $firstModel.provider
+        $script:WorkerAgent = $firstModel.provider
+        $script:ReviewerModel = $firstModel.model
+        $script:ReviewerProvider = $firstModel.provider
+        $script:ReviewerAgent = $firstModel.provider
+        $script:MonitorModel = $secondModel.model
+        $script:MonitorProvider = $secondModel.provider
+        $script:MonitorAgent = $secondModel.provider
+        $script:MaxIterations = 30
+        $script:WorkGuidelines = Join-Path $script:RalphRecipeDir 'ralph-work.yaml'
+        $script:ReviewGuidelines = Join-Path $script:RalphRecipeDir 'ralph-review.yaml'
+        $script:CurrentProfile = $profileName
+        Write-Host "[PROFILE] Loaded dynamic harness profile: $profileName (model: $($script:WorkerModel), provider: $($script:WorkerProvider))" -ForegroundColor Cyan
     }
-    catch {
-        Write-Error "Failed to load profile from '$env:RALPH_PROFILE': $_"
+    # Backwards compatibility: load from JSON file
+    elseif (Test-Path $profileName) {
+        try {
+            $profile = Get-Content $profileName -Raw | ConvertFrom-Json
+            if ($profile.workerModel)      { $script:WorkerModel = $profile.workerModel }
+            if ($profile.workerProvider)   { $script:WorkerProvider = $profile.workerProvider }
+            if ($profile.workerAgent)      { $script:WorkerAgent = $profile.workerAgent }
+            if ($profile.reviewerModel)    { $script:ReviewerModel = $profile.reviewerModel }
+            if ($profile.reviewerProvider) { $script:ReviewerProvider = $profile.reviewerProvider }
+            if ($profile.reviewerAgent)    { $script:ReviewerAgent = $profile.reviewerAgent }
+            if ($profile.monitorModel)     { $script:MonitorModel = $profile.monitorModel }
+            if ($profile.monitorProvider)  { $script:MonitorProvider = $profile.monitorProvider }
+            if ($profile.monitorAgent)     { $script:MonitorAgent = $profile.monitorAgent }
+            if ($profile.maxIterations)    { $script:MaxIterations = [int]$profile.maxIterations }
+            if ($profile.workGuidelines)   { $script:WorkGuidelines = $profile.workGuidelines }
+            if ($profile.reviewGuidelines) { $script:ReviewGuidelines = $profile.reviewGuidelines }
+        }
+        catch {
+            Write-Error "Failed to load profile from '$profileName': $_"
+        }
+        $script:CurrentProfile = (Split-Path $profileName -Leaf) -replace '\.json$', ''
+        Write-Host "[PROFILE] Loaded profile from file: $profileName" -ForegroundColor Cyan
     }
-    $script:CurrentProfile = (Split-Path $env:RALPH_PROFILE -Leaf) -replace '\.json$', ''
+    else {
+        Write-Warning "Profile '$profileName' not found in harness catalog or as file"
+    }
 }
 
 # =============================================================================

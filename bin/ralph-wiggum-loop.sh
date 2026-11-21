@@ -59,6 +59,28 @@ MONITOR_MODEL="${RALPH_MONITOR_MODEL:-}"
 MONITOR_PROVIDER="${RALPH_MONITOR_PROVIDER:-${RALPH_MONITON_PROVIDER:-}}"
 MONITOR_AGENT="${RALPH_MONITOR_AGENT:-goose}"
 
+# AI Harness Model Catalog - Dynamic model profiles based on underlying AI harness
+# Each entry: "model|provider"
+
+# AI Harness Model Catalog - Dynamic model profiles based on underlying AI harness
+# Each entry: "model|provider|tier" where tier is lite|plus|pro|ultra
+declare -A HARNESS_MODEL_CATALOG=(
+    [anthropic/claude]="fable-5-2|anthropic|ultra opus-5-5|anthropic|pro sonnet-5-5|anthropic|plus haiku-5-5|anthropic|lite"
+    [openai/codex]="gpt-6.2-astra|openai|ultra gpt-6.2-sol|openai|pro gpt-6.1-terra|openai|plus gpt-6-luna|openai|lite"
+    [gemini/antigravity]="gemini-4-carbon|google|ultra gemini-4-neon|google|pro gemini-4-argon|google|plus gemini-4-hydrogen|google|lite"
+    [copilot/copilot]="kimi-k3.1-pro|copilot|ultra deepseek-v4.1-flash-1017|copilot|pro phi-4-reasoning|copilot|plus phi-4-mini-reasoning|copilot|lite"
+    [goose/goose]="nvidia-nemotron-3-ultra-550b-a55b|NVIDIA|ultra nvidia-nemotron-3_5-super-vl-120b-a12b|NVIDIA|pro nvidia-nemotron-3-5-lightning-30b-a3b|NVIDIA|plus nvidia-nemotron-3_5-bolt-e4b|NVIDIA|lite"
+)
+
+# AI Harness Model Catalog - Dynamic model profiles based on underlying AI harness
+declare -A HARNESS_MODEL_CATALOG=(
+    [anthropic/claude]="fable-5-2 opus-5-5 sonnet-5-5 haiku-5-5"
+    [openai/codex]="gpt-6.2-astra gpt-6.2-sol gpt-6.1-terra gpt-6-luna"
+    [gemini/antigravity]="gemini-4-carbon gemini-4-neon gemini-4-hydrogen gemini-4-argon"
+    [copilot/copilot]="kimi-k3.1-pro deepseek-v4.1-flash-1017 phi-4-reasoning phi-4-mini-reasoning"
+    [goose/goose]="nvidia-nemotron-3-ultra-550b-a55b nvidia-nemotron-3_5-super-vl-120b-a12b nvidia-nemotron-3-5-lightning-30b-a3b nvidia-nemotron-3_5-bolt-e4b"
+)
+
 CLI_TASK=""
 CLI_SESSION_ID=""
 
@@ -729,10 +751,10 @@ SUMMARY:
             execute_llm_with_retry "WORKER" "${_clw_session}" sh -c "echo $(json_escape "${_clw_prompt}") | claude --model ${_clw_wm} --print"
             ;;
         openai)
-            execute_llm_with_retry "WORKER" "${_clw_session}" sh -c "echo $(json_escape "${_clw_prompt}") | openai chat --model ${_clw_wm} --no-stream"
+            execute_llm_with_retry "WORKER" "${_clw_session}" sh -c "echo $(json_escape "${_clw_prompt}") | codex exec --model ${_clw_wm} --no-stream"
             ;;
         google|gemini)
-            execute_llm_with_retry "WORKER" "${_clw_session}" sh -c "echo $(json_escape "${_clw_prompt}") | gemini --model ${_clw_wm} --format=text"
+            execute_llm_with_retry "WORKER" "${_clw_session}" sh -c "echo $(json_escape "${_clw_prompt}") | agy -p --model ${_clw_wm} --format=text"
             ;;
         copilot)
             execute_llm_with_retry "WORKER" "${_clw_session}" copilot -p --allow-all-tools "${_clw_prompt}"
@@ -799,10 +821,10 @@ FEEDBACK: [your feedback, or empty if SHIP]"
             execute_llm_with_retry "REVIEWER" "${_clr_session}" sh -c "echo $(json_escape "${_clr_prompt}") | claude --model ${_clr_rm} --print"
             ;;
         openai)
-            execute_llm_with_retry "REVIEWER" "${_clr_session}" sh -c "echo $(json_escape "${_clr_prompt}") | openai chat --model ${_clr_rm} --no-stream"
+            execute_llm_with_retry "REVIEWER" "${_clr_session}" sh -c "echo $(json_escape "${_clr_prompt}") | codex exec --model ${_clr_rm} --no-stream"
             ;;
         google|gemini)
-            execute_llm_with_retry "REVIEWER" "${_clr_session}" sh -c "echo $(json_escape "${_clr_prompt}") | gemini --model ${_clr_rm} --format=text"
+            execute_llm_with_retry "REVIEWER" "${_clr_session}" sh -c "echo $(json_escape "${_clr_prompt}") | agy -p --model ${_clr_rm} --format=text"
             ;;
         copilot)
             execute_llm_with_retry "REVIEWER" "${_clr_session}" copilot -p --allow-all-tools "${_clr_prompt}"
@@ -848,16 +870,16 @@ call_llm_monitor() {
             execute_llm_with_retry "MONITOR" "${_clm_session}" sh -c "echo $(json_escape "${_clm_prompt}") | claude --model ${_clm_mm} --print"
             ;;
         openai)
-            execute_llm_with_retry "MONITOR" "${_clm_session}" sh -c "echo $(json_escape "${_clm_prompt}") | openai chat --model ${_clm_mm} --no-stream"
+            execute_llm_with_retry "MONITOR" "${_clm_session}" sh -c "echo $(json_escape "${_clm_prompt}") | codex exec --model ${_clm_mm} --no-stream"
             ;;
         google|gemini)
-            execute_llm_with_retry "MONITOR" "${_clm_session}" sh -c "echo $(json_escape "${_clm_prompt}") | gemini --model ${_clm_mm} --format=text"
+            execute_llm_with_retry "MONITOR" "${_clm_session}" sh -c "echo $(json_escape "${_clm_prompt}") | agy -p --model ${_clm_mm} --format=text"
             ;;
         goose)
             execute_llm_with_retry "MONITOR" "${_clm_session}" env GOOSE_MODEL="${_clm_mm}" GOOSE_PROVIDER="${_clm_mp}" goose run --no-session --text "${_clm_prompt}"
             ;;
         *)
-            execute_llm_with_retry "MONITOR" "${_clm_session}" sh -c "echo $(json_escape "${_clm_prompt}") | openai chat --model ${_clm_mm} --no-stream"
+            execute_llm_with_retry "MONITOR" "${_clm_session}" sh -c "echo $(json_escape "${_clm_prompt}") | codex exec --model ${_clm_mm} --no-stream"
             ;;
     esac
 }
@@ -1147,7 +1169,40 @@ run_cli() {
     fi
 
     if [ -n "${_rc_cli_prof}" ]; then
-        if _rc_prof_path="$(resolve_profile_path "${_rc_cli_prof}")"; then
+        _rc_prof_name="${_rc_cli_prof}"
+        
+        # First, check if it's a harness name in our catalog
+        if [ -n "${HARNESS_MODEL_CATALOG[${_rc_prof_name}]}" ]; then
+            # Use first model from the harness as default (format: "model|provider model|provider ...")
+            _rc_models_str="${HARNESS_MODEL_CATALOG[${_rc_prof_name}]}"
+            
+            # Parse first model (format: "model|provider")
+            _rc_first_entry=$(echo "${_rc_models_str}" | awk '{print $1}')
+            _rc_first_model=$(echo "${_rc_first_entry}" | cut -d'|' -f1)
+            _rc_first_provider=$(echo "${_rc_first_entry}" | cut -d'|' -f2)
+            
+            # Parse second model
+            _rc_second_entry=$(echo "${_rc_models_str}" | awk '{print $2}')
+            _rc_second_model=$(echo "${_rc_second_entry}" | cut -d'|' -f1)
+            _rc_second_provider=$(echo "${_rc_second_entry}" | cut -d'|' -f2)
+            # Fallback to first if second not available
+            _rc_second_model=${_rc_second_model:-${_rc_first_model}}
+            _rc_second_provider=${_rc_second_provider:-${_rc_first_provider}}
+            
+            [ -z "${_rc_wm}" ] && _rc_wm="${_rc_first_model}"
+            [ -z "${_rc_wp}" ] && _rc_wp="${_rc_first_provider}"
+            [ -z "${_rc_wa}" ] && _rc_wa="${_rc_first_provider}"
+            [ -z "${_rc_rm}" ] && _rc_rm="${_rc_first_model}"
+            [ -z "${_rc_rp}" ] && _rc_rp="${_rc_first_provider}"
+            [ -z "${_rc_ra}" ] && _rc_ra="${_rc_first_provider}"
+            [ -z "${_rc_mm}" ] && _rc_mm="${_rc_second_model}"
+            [ -z "${_rc_mp}" ] && _rc_mp="${_rc_second_provider}"
+            [ -z "${_rc_ma}" ] && _rc_ma="${_rc_second_provider}"
+            [ -z "${_rc_max_iter}" ] && _rc_max_iter=30
+            _rc_cur_prof="${_rc_prof_name}"
+            echo "[PROFILE] Loaded dynamic harness profile: ${_rc_prof_name} (model: ${_rc_first_model}, provider: ${_rc_first_provider})" >&2
+        # Backwards compatibility: load from JSON file
+        elif _rc_prof_path="$(resolve_profile_path "${_rc_prof_name}")"; then
             [ -z "${_rc_wm}" ] && _rc_wm=$(jq -r '.workerModel // empty' "${_rc_prof_path}")
             [ -z "${_rc_wp}" ] && _rc_wp=$(jq -r '.workerProvider // empty' "${_rc_prof_path}")
             _rc_wa=$(jq -r '.workerAgent // "goose"' "${_rc_prof_path}")
@@ -1161,9 +1216,9 @@ run_cli() {
             _rc_backoff=$(jq -r '.initialBackoff // 5' "${_rc_prof_path}")
             _rc_throttle=$(jq -r '.throttleDelay // 0' "${_rc_prof_path}")
             _rc_retries=$(jq -r '.maxRetries // 3' "${_rc_prof_path}")
-            _rc_cur_prof="${_rc_cli_prof}"
+            _rc_cur_prof="${_rc_prof_name}"
         else
-            echo "[ERROR] Profile not found: ${_rc_cli_prof}" >&2
+            echo "[ERROR] Profile not found: ${_rc_prof_name} (not in harness catalog or file)" >&2
             exit 1
         fi
     fi
@@ -1988,7 +2043,27 @@ handle_tools_list() {
       },
       "required": ["task", "workerModel", "workerProvider", "reviewerModel", "reviewerProvider"]
     }
-  }
+    },
+    },
+    {
+      "name": "ralph_loop_list_harnesses",
+      "description": "List all available AI harnesses with their model catalogs",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "ralph_loop_get_models",
+      "description": "Get available models for a specific AI harness",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "harness": { "type": "string", "description": "Harness identifier (e.g., anthropic/claude, openai/codex, gemini/antigravity, copilot/copilot, goose/goose)" }
+        },
+        "required": ["harness"]
+      }
+    }
 ]'
     _htl_res=$(jq -cn --argjson tools "${_htl_tools}" '{tools: $tools}')
     json_response "${_htl_id}" "${_htl_res}"
@@ -2034,6 +2109,12 @@ dispatch_ralph_tool() {
         ralph_loop_run|ralf_loop_run)
             handle_run "${_drt_id}" "${_drt_args}"
             ;;
+          ralph_loop_list_harnesses|ralf_loop_list_harnesses)
+              handle_list_harnesses "${_drt_id}" "${_drt_args}"
+              ;;
+          ralph_loop_get_models|ralf_loop_get_models)
+              handle_get_models "${_drt_id}" "${_drt_args}"
+              ;;
         *)
             json_response "${_drt_id}" "" "$(mcp_error -32601 "Unknown tool: ${_drt_name}")"
             ;;
@@ -2041,6 +2122,63 @@ dispatch_ralph_tool() {
 }
 
 # Override SDK handle_tools_call
+
+# Handle ralph_loop_list_harnesses - List all available AI harnesses
+handle_list_harnesses() {
+    _hlh_id="${1}"
+    _hlh_harnesses=""
+    for _hlh_key in "${!HARNESS_MODEL_CATALOG[@]}"; do
+        if [ -z "${_hlh_harnesses}" ]; then
+            _hlh_harnesses="\"${_hlh_key}\""
+        else
+            _hlh_harnesses="${_hlh_harnesses}, \"${_hlh_key}\""
+        fi
+    done
+    _hlh_count=${#HARNESS_MODEL_CATALOG[@]}
+    _hlh_res=$(jq -cn --argjson harnesses "[${_hlh_harnesses}]" --argjson count "${_hlh_count}" '{success: true, harnesses: $harnesses, count: $count}')
+    json_response "${_hlh_id}" "${_hlh_res}"
+}
+
+# Handle ralph_loop_get_models - Get models for a specific harness
+handle_get_models() {
+    _hgm_id="${1}"
+    _hgm_args="${2}"
+    _hgm_harness=$(printf '%s' "${_hgm_args}" | jq -r '.harness // empty' 2>/dev/null || echo "")
+
+    if [ -z "${_hgm_harness}" ]; then
+        _hgm_res=$(jq -cn '{success: false, error: {code: -32602, message: "Harness parameter is required"}}')
+        json_response "${_hgm_id}" "" "${_hgm_res}"
+        return
+    fi
+
+    if [ -z "${HARNESS_MODEL_CATALOG[${_hgm_harness}]}" ]; then
+        _hgm_available=""
+        for _hgm_key in "${!HARNESS_MODEL_CATALOG[@]}"; do
+            if [ -z "${_hgm_available}" ]; then
+                _hgm_available="${_hgm_key}"
+            else
+                _hgm_available="${_hgm_available}, ${_hgm_key}"
+            fi
+        done
+        _hgm_res=$(jq -cn --arg harness "${_hgm_harness}" --arg available "${_hgm_available}" '{success: false, error: {code: -32602, message: "Unknown harness: \($harness). Available: \($available)"}}')
+        json_response "${_hgm_id}" "" "${_hgm_res}"
+        return
+    fi
+
+    _hgm_models_str="${HARNESS_MODEL_CATALOG[${_hgm_harness}]}"
+    _hgm_models_json=""
+    for _hgm_model in ${_hgm_models_str}; do
+        if [ -z "${_hgm_models_json}" ]; then
+            _hgm_models_json="\"${_hgm_model}\""
+        else
+            _hgm_models_json="${_hgm_models_json}, \"${_hgm_model}\""
+        fi
+    done
+    _hgm_count=$(printf '%s' "${_hgm_models_str}" | wc -w)
+    _hgm_res=$(jq -cn --arg harness "${_hgm_harness}" --argjson models "[${_hgm_models_json}]" --argjson count "${_hgm_count}" '{success: true, harness: $harness, models: $models, count: $count}')
+    json_response "${_hgm_id}" "${_hgm_res}"
+}
+
 handle_tools_call() {
     _htc_id="${1}"
     _htc_params="${2:-"{}"}"
