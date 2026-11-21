@@ -1,5 +1,5 @@
-#!/usr/bin/env sh
-# ralph-wiggum-loop.sh - Ralph Loop Agent Plugin (POSIX sh compliant: MCP Server + CLI Orchestration)
+#!/usr/bin/env bash
+# ralph-wiggum-loop.sh - Ralph Loop Agent Plugin (bash compliant: MCP Server + CLI Orchestration)
 # Cross-platform implementation of the Ralph Loop iterative development technique.
 # Sources generic mcp-sdk.sh for shared MCP protocol utilities.
 
@@ -60,25 +60,35 @@ MONITOR_PROVIDER="${RALPH_MONITOR_PROVIDER:-${RALPH_MONITON_PROVIDER:-}}"
 MONITOR_AGENT="${RALPH_MONITOR_AGENT:-goose}"
 
 # AI Harness Model Catalog - Dynamic model profiles based on underlying AI harness
-# Each entry: "model|provider"
-
-# AI Harness Model Catalog - Dynamic model profiles based on underlying AI harness
 # Each entry: "model|provider|tier" where tier is lite|plus|pro|ultra
 declare -A HARNESS_MODEL_CATALOG=(
     [anthropic/claude]="fable-5-2|anthropic|ultra opus-5-5|anthropic|pro sonnet-5-5|anthropic|plus haiku-5-5|anthropic|lite"
     [openai/codex]="gpt-6.2-astra|openai|ultra gpt-6.2-sol|openai|pro gpt-6.1-terra|openai|plus gpt-6-luna|openai|lite"
-    [gemini/antigravity]="gemini-4-carbon|google|ultra gemini-4-neon|google|pro gemini-4-argon|google|plus gemini-4-hydrogen|google|lite"
+    [gemini/antigravity]="gemini-4-carbon|google|ultra gemini-4-neon|google|pro gemini-4-hydrogen|google|plus gemini-4-argon|google|lite"
     [copilot/copilot]="kimi-k3.1-pro|copilot|ultra deepseek-v4.1-flash-1017|copilot|pro phi-4-reasoning|copilot|plus phi-4-mini-reasoning|copilot|lite"
     [goose/goose]="nvidia-nemotron-3-ultra-550b-a55b|NVIDIA|ultra nvidia-nemotron-3_5-super-vl-120b-a12b|NVIDIA|pro nvidia-nemotron-3-5-lightning-30b-a3b|NVIDIA|plus nvidia-nemotron-3_5-bolt-e4b|NVIDIA|lite"
 )
 
-# AI Harness Model Catalog - Dynamic model profiles based on underlying AI harness
-declare -A HARNESS_MODEL_CATALOG=(
-    [anthropic/claude]="fable-5-2 opus-5-5 sonnet-5-5 haiku-5-5"
-    [openai/codex]="gpt-6.2-astra gpt-6.2-sol gpt-6.1-terra gpt-6-luna"
-    [gemini/antigravity]="gemini-4-carbon gemini-4-neon gemini-4-hydrogen gemini-4-argon"
-    [copilot/copilot]="kimi-k3.1-pro deepseek-v4.1-flash-1017 phi-4-reasoning phi-4-mini-reasoning"
-    [goose/goose]="nvidia-nemotron-3-ultra-550b-a55b nvidia-nemotron-3_5-super-vl-120b-a12b nvidia-nemotron-3-5-lightning-30b-a3b nvidia-nemotron-3_5-bolt-e4b"
+# Harness -> agent CLI mapping (which CLI binary drives the harness)
+declare -A HARNESS_AGENTS=(
+    [anthropic/claude]="claude"
+    [openai/codex]="codex"
+    [gemini/antigravity]="antigravity"
+    [copilot/copilot]="copilot"
+    [goose/goose]="goose"
+)
+
+# Agent -> harness mapping (used to pick a harness for adaptive switching)
+declare -A AGENT_HARNESSES=(
+    [claude]="anthropic/claude"
+    [anthropic]="anthropic/claude"
+    [codex]="openai/codex"
+    [openai]="openai/codex"
+    [antigravity]="gemini/antigravity"
+    [gemini]="gemini/antigravity"
+    [google]="gemini/antigravity"
+    [copilot]="copilot/copilot"
+    [goose]="goose/goose"
 )
 
 CLI_TASK=""
@@ -289,14 +299,14 @@ resolve_profile_path() {
     for _rpp_cand in \
         "${PLUGIN_ROOT:-}/profiles/${_rpp_name}.json" \
         "${PLUGIN_ROOT:-}/profiles/${_rpp_name}" \
-        "${WORKSPACE}/profiles/${_rpp_name}.json" \
-        "${WORKSPACE}/profiles/${_rpp_name}" \
-        "${WORKSPACE}/${_rpp_name}" \
+        "${WORKSPACE:-}/profiles/${_rpp_name}.json" \
+        "${WORKSPACE:-}/profiles/${_rpp_name}" \
+        "${WORKSPACE:-}/${_rpp_name}" \
         "${_rpp_name}" \
-        "${SCRIPT_DIR}/../profiles/${_rpp_name}.json" \
-        "${SCRIPT_DIR}/../profiles/${_rpp_name}" \
-        "${SCRIPT_DIR}/profiles/${_rpp_name}.json" \
-        "${SCRIPT_DIR}/profiles/${_rpp_name}"
+        "${SCRIPT_DIR:-}/../profiles/${_rpp_name}.json" \
+        "${SCRIPT_DIR:-}/../profiles/${_rpp_name}" \
+        "${SCRIPT_DIR:-}/profiles/${_rpp_name}.json" \
+        "${SCRIPT_DIR:-}/profiles/${_rpp_name}"
     do
         if [ -f "${_rpp_cand}" ]; then
             echo "${_rpp_cand}"
@@ -306,6 +316,140 @@ resolve_profile_path() {
     return 1
 }
 
+# Returns the "model|provider|tier" catalog entry for a harness/tier pair
+harness_entry_by_tier() {
+    _het_harness="${1:-}"
+    _het_tier="${2:-}"
+    if [ -z "${_het_harness}" ] || [ -z "${_het_tier}" ]; then
+        return 1
+    fi
+    _het_models="${HARNESS_MODEL_CATALOG[${_het_harness}]:-}"
+    if [ -z "${_het_models}" ]; then
+        return 1
+    fi
+    for _het_entry in ${_het_models}; do
+        _het_t=$(printf '%s' "${_het_entry}" | cut -d'|' -f3)
+        if [ "${_het_t}" = "${_het_tier}" ]; then
+            printf '%s' "${_het_entry}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Agent CLI that drives a harness (claude, codex, antigravity, copilot, goose)
+get_harness_agent() {
+    if [ -z "${1:-}" ]; then
+        printf ''
+        return 0
+    fi
+    printf '%s' "${HARNESS_AGENTS[${1}]:-}"
+}
+
+# Harness that drives an agent CLI (used by adaptive switching)
+get_harness_for_agent() {
+    if [ -z "${1:-}" ]; then
+        printf ''
+        return 0
+    fi
+    printf '%s' "${AGENT_HARNESSES[${1}]:-}"
+}
+
+# Resolves a dynamic profile spec into a pipe separated configuration string:
+#   harness|tier|agent|workerModel|workerProvider|reviewerModel|reviewerProvider|monitorModel|monitorProvider
+# Accepted inputs: 'goose/goose' (default tier ultra) or 'goose/goose|pro'
+# Resolves a dynamic profile spec into the _PS_* variables.
+#   _PS_HARNESS _PS_TIER _PS_AGENT _PS_WM _PS_WP _PS_RM _PS_RP _PS_MM _PS_MP
+# Accepted inputs: 'goose/goose' (default tier ultra) or 'goose/goose|pro'
+# Returns 1 when the value does not name a known harness.
+set_profile_spec() {
+    _sps_value="${1:-}"
+    _sps_default_tier="${2:-ultra}"
+
+    _PS_HARNESS=""
+    _PS_TIER=""
+    _PS_AGENT=""
+    _PS_WM=""
+    _PS_WP=""
+    _PS_RM=""
+    _PS_RP=""
+    _PS_MM=""
+    _PS_MP=""
+
+    if [ -z "${_sps_value}" ]; then
+        return 1
+    fi
+
+    _sps_harness="${_sps_value}"
+    _sps_tier="${_sps_default_tier}"
+    case "${_sps_value}" in
+        *\|*)
+            _sps_harness="${_sps_value%%|*}"
+            _sps_tier="${_sps_value#*|}"
+            ;;
+    esac
+    if [ -z "${_sps_tier}" ]; then
+        _sps_tier="${_sps_default_tier}"
+    fi
+    if [ -z "${_sps_harness}" ]; then
+        return 1
+    fi
+
+    _sps_models="${HARNESS_MODEL_CATALOG[${_sps_harness}]:-}"
+    if [ -z "${_sps_models}" ]; then
+        return 1
+    fi
+    _sps_entries=(${_sps_models})
+    _sps_count=${#_sps_entries[@]}
+    if [ "${_sps_count}" -eq 0 ]; then
+        return 1
+    fi
+
+    _sps_widx=0
+    _sps_i=0
+    for _sps_e in "${_sps_entries[@]}"; do
+        _sps_t=$(printf '%s' "${_sps_e}" | cut -d'|' -f3)
+        if [ "${_sps_t}" = "${_sps_tier}" ]; then
+            _sps_widx=${_sps_i}
+            break
+        fi
+        _sps_i=$((_sps_i + 1))
+    done
+    _sps_ridx=$(( (_sps_widx + 1) % _sps_count ))
+    _sps_midx=$(( (_sps_widx + 2) % _sps_count ))
+
+    _sps_w="${_sps_entries[${_sps_widx}]}"
+    _sps_r="${_sps_entries[${_sps_ridx}]}"
+    _sps_m="${_sps_entries[${_sps_midx}]}"
+
+    _PS_HARNESS="${_sps_harness}"
+    _PS_TIER=$(printf '%s' "${_sps_w}" | cut -d'|' -f3)
+    _PS_AGENT="$(get_harness_agent "${_sps_harness}")"
+    if [ -z "${_PS_AGENT}" ]; then
+        _PS_AGENT=$(printf '%s' "${_sps_w}" | cut -d'|' -f2)
+    fi
+    _PS_WM=$(printf '%s' "${_sps_w}" | cut -d'|' -f1)
+    _PS_WP=$(printf '%s' "${_sps_w}" | cut -d'|' -f2)
+    _PS_RM=$(printf '%s' "${_sps_r}" | cut -d'|' -f1)
+    _PS_RP=$(printf '%s' "${_sps_r}" | cut -d'|' -f2)
+    _PS_MM=$(printf '%s' "${_sps_m}" | cut -d'|' -f1)
+    _PS_MP=$(printf '%s' "${_sps_m}" | cut -d'|' -f2)
+    return 0
+}
+
+# Pipe separated view of the resolved spec (kept for compatibility/debugging)
+resolve_profile_spec() {
+    if ! set_profile_spec "${1:-}" "${2:-ultra}"; then
+        return 1
+    fi
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+        "${_PS_HARNESS}" "${_PS_TIER}" "${_PS_AGENT}" \
+        "${_PS_WM}" "${_PS_WP}" "${_PS_RM}" "${_PS_RP}" "${_PS_MM}" "${_PS_MP}"
+    return 0
+}
+
+# Legacy static JSON profile support (backwards compatibility only - adaptive
+# switching uses the dynamic harness catalog).
 apply_profile() {
     _ap_session="${1}"
     _ap_name="${2}"
@@ -374,21 +518,67 @@ test_quality_trigger() {
 get_adaptive_profile_switch() {
     _gaps_strategy="${1}"
     _gaps_trigger="${2}"
-    _gaps_current="${3}"
+    _gaps_current="${3:-}"
 
     case "${_gaps_strategy}:${_gaps_trigger}" in
-        quality:resource)    _gaps_order="ultra super pro plus lite" ;;
-        quality:quality)     _gaps_order="lite plus pro super ultra" ;;
-        price:resource)      _gaps_order="ultra super pro plus lite" ;;
-        price:quality)       _gaps_order="lite plus pro super ultra" ;;
+        quality:resource)    _gaps_order="ultra pro plus lite" ;;
+        quality:quality)     _gaps_order="lite plus pro ultra" ;;
+        price:resource)      _gaps_order="ultra pro plus lite" ;;
+        price:quality)       _gaps_order="lite plus pro ultra" ;;
         balanced:resource)   _gaps_order="pro plus lite" ;;
-        balanced:quality)    _gaps_order="pro super ultra" ;;
-        *)                   echo ""; return ;;
+        balanced:quality)    _gaps_order="lite plus pro ultra" ;;
+        *) echo ""; return ;;
+    esac
+
+    # Dynamic path: the current profile is a harness spec ("harness|tier")
+    case "${_gaps_current}" in
+        *\|*)
+            _gaps_harness="${_gaps_current%%|*}"
+            _gaps_tier="${_gaps_current#*|}"
+            if [ -z "${_gaps_harness}" ]; then
+                echo ""
+                return
+            fi
+            if [ -z "${HARNESS_MODEL_CATALOG[${_gaps_harness}]:-}" ]; then
+                echo ""
+                return
+            fi
+            _gaps_next=""
+            _gaps_found="false"
+            for _gaps_item in ${_gaps_order}; do
+                if [ "${_gaps_found}" = "true" ]; then
+                    _gaps_next="${_gaps_item}"
+                    break
+                fi
+                if [ "${_gaps_item}" = "${_gaps_tier}" ]; then
+                    _gaps_found="true"
+                fi
+            done
+            if [ -z "${_gaps_next}" ]; then
+                _gaps_next=$(printf '%s' "${_gaps_order}" | awk '{print $1}')
+            fi
+            _gaps_entry="$(harness_entry_by_tier "${_gaps_harness}" "${_gaps_next}" || true)"
+            if [ -z "${_gaps_entry}" ]; then
+                echo ""
+                return
+            fi
+            echo "${_gaps_harness}|${_gaps_next}"
+            return
+            ;;
+    esac
+
+    # Legacy path: static JSON profile names (lite/plus/pro/super/ultra)
+    case "${_gaps_strategy}:${_gaps_trigger}" in
+        quality:resource|price:resource) _gaps_legacy="ultra super pro plus lite" ;;
+        quality:quality|price:quality)   _gaps_legacy="lite plus pro super ultra" ;;
+        balanced:resource) _gaps_legacy="pro plus lite" ;;
+        balanced:quality)  _gaps_legacy="pro super ultra" ;;
+        *) echo ""; return ;;
     esac
 
     _gaps_first=""
     _gaps_return_next="false"
-    for _gaps_item in ${_gaps_order}; do
+    for _gaps_item in ${_gaps_legacy}; do
         if [ -z "${_gaps_first}" ]; then
             _gaps_first="${_gaps_item}"
         fi
@@ -411,25 +601,48 @@ switch_adaptive_profile() {
     _sap_old="${3:-}"
 
     echo "[ADAPTIVE] Switching profile from '${_sap_old}' to '${_sap_new}'" >&2
-    apply_profile "${_sap_session}" "${_sap_new}"
+
+    case "${_sap_new}" in
+        *\|*)
+            # Dynamic harness profile: resolve models straight from the catalog
+            if ! set_profile_spec "${_sap_new}"; then
+                echo "[ERROR] Unknown harness profile: ${_sap_new}" >&2
+                return 1
+            fi
+            ensure_state_dir "${_sap_session}"
+            # keep the session's current budget/limits when switching models
+            _sap_cur_cfg=$(get_config "${_sap_session}")
+            _sap_cur_mi=$(printf '%s\n' "${_sap_cur_cfg}" | jq -r '.maxIterations // empty' 2>/dev/null || echo "")
+            _sap_cur_ib=$(printf '%s\n' "${_sap_cur_cfg}" | jq -r '.initialBackoff // empty' 2>/dev/null || echo "")
+            _sap_cur_td=$(printf '%s\n' "${_sap_cur_cfg}" | jq -r '.throttleDelay // empty' 2>/dev/null || echo "")
+            _sap_cur_mr=$(printf '%s\n' "${_sap_cur_cfg}" | jq -r '.maxRetries // empty' 2>/dev/null || echo "")
+            set_config "${_sap_session}" "${_PS_WM}" "${_PS_WP}" "${_PS_RM}" "${_PS_RP}" "${_sap_cur_mi:-${MAX_ITERATIONS:-10}}" "true" "${_PS_AGENT}" "${_PS_AGENT}" "${WORK_GUIDELINES:-}" "${REVIEW_GUIDELINES:-}" "${_PS_MM}" "${_PS_MP}" "${_PS_AGENT}" "${_sap_cur_ib:-${RALPH_INITIAL_BACKOFF:-5}}" "${_sap_cur_td:-${RALPH_THROTTLE_DELAY:-0}}" "${_sap_cur_mr:-${RALPH_MAX_RETRIES:-3}}"
+            ;;
+        *)
+            # Legacy static JSON profile
+            if ! apply_profile "${_sap_session}" "${_sap_new}"; then
+                return 1
+            fi
+            ;;
+    esac
 
     _sap_cfg=$(get_config "${_sap_session}")
 
-    _sap_wm=$(printf '%s\n' "${_sap_cfg}" | jq -r '.workerModel // empty')
-    _sap_wp=$(printf '%s\n' "${_sap_cfg}" | jq -r '.workerProvider // empty')
-    _sap_wa=$(printf '%s\n' "${_sap_cfg}" | jq -r '.workerAgent // "goose"')
-    _sap_rm=$(printf '%s\n' "${_sap_cfg}" | jq -r '.reviewerModel // empty')
-    _sap_rp=$(printf '%s\n' "${_sap_cfg}" | jq -r '.reviewerProvider // empty')
-    _sap_ra=$(printf '%s\n' "${_sap_cfg}" | jq -r '.reviewerAgent // "goose"')
-    _sap_mm=$(printf '%s\n' "${_sap_cfg}" | jq -r '.monitorModel // empty')
-    _sap_mp=$(printf '%s\n' "${_sap_cfg}" | jq -r '.monitorProvider // empty')
-    _sap_ma=$(printf '%s\n' "${_sap_cfg}" | jq -r '.monitorAgent // "goose"')
-    _sap_mi=$(printf '%s\n' "${_sap_cfg}" | jq -r '.maxIterations // 10')
-    _sap_ib=$(printf '%s\n' "${_sap_cfg}" | jq -r '.initialBackoff // 5')
-    _sap_td=$(printf '%s\n' "${_sap_cfg}" | jq -r '.throttleDelay // 0')
-    _sap_mr=$(printf '%s\n' "${_sap_cfg}" | jq -r '.maxRetries // 3')
+    _SAP_WM=$(printf '%s\n' "${_sap_cfg}" | jq -r '.workerModel // empty')
+    _SAP_WP=$(printf '%s\n' "${_sap_cfg}" | jq -r '.workerProvider // empty')
+    _SAP_WA=$(printf '%s\n' "${_sap_cfg}" | jq -r '.workerAgent // "goose"')
+    _SAP_RM=$(printf '%s\n' "${_sap_cfg}" | jq -r '.reviewerModel // empty')
+    _SAP_RP=$(printf '%s\n' "${_sap_cfg}" | jq -r '.reviewerProvider // empty')
+    _SAP_RA=$(printf '%s\n' "${_sap_cfg}" | jq -r '.reviewerAgent // "goose"')
+    _SAP_MM=$(printf '%s\n' "${_sap_cfg}" | jq -r '.monitorModel // empty')
+    _SAP_MP=$(printf '%s\n' "${_sap_cfg}" | jq -r '.monitorProvider // empty')
+    _SAP_MA=$(printf '%s\n' "${_sap_cfg}" | jq -r '.monitorAgent // "goose"')
+    _SAP_MI=$(printf '%s\n' "${_sap_cfg}" | jq -r '.maxIterations // 10')
+    _SAP_IB=$(printf '%s\n' "${_sap_cfg}" | jq -r '.initialBackoff // 5')
+    _SAP_TD=$(printf '%s\n' "${_sap_cfg}" | jq -r '.throttleDelay // 0')
+    _SAP_MR=$(printf '%s\n' "${_sap_cfg}" | jq -r '.maxRetries // 3')
 
-    echo "${_sap_wm}|${_sap_wp}|${_sap_wa}|${_sap_rm}|${_sap_rp}|${_sap_ra}|${_sap_mm}|${_sap_mp}|${_sap_ma}|${_sap_mi}|${_sap_ib}|${_sap_td}|${_sap_mr}"
+    return 0
 }
 
 # =============================================================================
@@ -750,10 +963,10 @@ SUMMARY:
         anthropic|claude)
             execute_llm_with_retry "WORKER" "${_clw_session}" sh -c "echo $(json_escape "${_clw_prompt}") | claude --model ${_clw_wm} --print"
             ;;
-        openai)
+        openai|codex)
             execute_llm_with_retry "WORKER" "${_clw_session}" sh -c "echo $(json_escape "${_clw_prompt}") | codex exec --model ${_clw_wm} --no-stream"
             ;;
-        google|gemini)
+        google|gemini|antigravity)
             execute_llm_with_retry "WORKER" "${_clw_session}" sh -c "echo $(json_escape "${_clw_prompt}") | agy -p --model ${_clw_wm} --format=text"
             ;;
         copilot)
@@ -820,10 +1033,10 @@ FEEDBACK: [your feedback, or empty if SHIP]"
         anthropic|claude)
             execute_llm_with_retry "REVIEWER" "${_clr_session}" sh -c "echo $(json_escape "${_clr_prompt}") | claude --model ${_clr_rm} --print"
             ;;
-        openai)
+        openai|codex)
             execute_llm_with_retry "REVIEWER" "${_clr_session}" sh -c "echo $(json_escape "${_clr_prompt}") | codex exec --model ${_clr_rm} --no-stream"
             ;;
-        google|gemini)
+        google|gemini|antigravity)
             execute_llm_with_retry "REVIEWER" "${_clr_session}" sh -c "echo $(json_escape "${_clr_prompt}") | agy -p --model ${_clr_rm} --format=text"
             ;;
         copilot)
@@ -869,11 +1082,14 @@ call_llm_monitor() {
         anthropic|claude)
             execute_llm_with_retry "MONITOR" "${_clm_session}" sh -c "echo $(json_escape "${_clm_prompt}") | claude --model ${_clm_mm} --print"
             ;;
-        openai)
+        openai|codex)
             execute_llm_with_retry "MONITOR" "${_clm_session}" sh -c "echo $(json_escape "${_clm_prompt}") | codex exec --model ${_clm_mm} --no-stream"
             ;;
-        google|gemini)
+        google|gemini|antigravity)
             execute_llm_with_retry "MONITOR" "${_clm_session}" sh -c "echo $(json_escape "${_clm_prompt}") | agy -p --model ${_clm_mm} --format=text"
+            ;;
+        copilot)
+            execute_llm_with_retry "MONITOR" "${_clm_session}" copilot -p --allow-all-tools "${_clm_prompt}"
             ;;
         goose)
             execute_llm_with_retry "MONITOR" "${_clm_session}" env GOOSE_MODEL="${_clm_mm}" GOOSE_PROVIDER="${_clm_mp}" goose run --no-session --text "${_clm_prompt}"
@@ -1016,6 +1232,8 @@ ${_pro_output}"
 run_cli() {
     _rc_adaptive="false"
     _rc_strategy="balanced"
+    _rc_max_iter_set="false"
+    _rc_agent_set="false"
     _rc_cur_prof="${RALPH_PROFILE:-}"
     _rc_cli_prof=""
     _rc_wm="${WORKER_MODEL}"
@@ -1046,7 +1264,7 @@ run_cli() {
                 echo "  CLI Mode    : $0 [options] \"task description\" [--profile pro]"
                 echo ""
                 echo "Options:"
-                echo "  --profile PROFILE            Quality profile (lite, plus, pro, super, ultra)"
+                echo "  --profile PROFILE            Profile: harness (anthropic/claude, openai/codex, gemini/antigravity, copilot/copilot, goose/goose), harness|tier, or legacy JSON profile name"
                 echo "  --worker-model MODEL         Worker model (default: \$RALPH_WORKER_MODEL)"
                 echo "  --worker-provider PROVIDER   Worker provider (default: \$RALPH_WORKER_PROVIDER)"
                 echo "  --worker-agent AGENT         Worker agent (default: \$RALPH_WORKER_AGENT)"
@@ -1082,6 +1300,7 @@ run_cli() {
                 ;;
             --worker-agent)
                 _rc_wa="${2:-}"
+                _rc_agent_set="true"
                 shift 2
                 ;;
             --reviewer-model)
@@ -1094,6 +1313,7 @@ run_cli() {
                 ;;
             --reviewer-agent)
                 _rc_ra="${2:-}"
+                _rc_agent_set="true"
                 shift 2
                 ;;
             --monitor-model)
@@ -1106,10 +1326,12 @@ run_cli() {
                 ;;
             --monitor-agent)
                 _rc_ma="${2:-}"
+                _rc_agent_set="true"
                 shift 2
                 ;;
             --max-iterations)
                 _rc_max_iter="${2:-${MAX_ITERATIONS}}"
+                _rc_max_iter_set="true"
                 shift 2
                 ;;
             --work-guidelines)
@@ -1168,39 +1390,33 @@ run_cli() {
         RALPH_STATE_BASE="${WORKSPACE}/.ralph"
     fi
 
-    if [ -n "${_rc_cli_prof}" ]; then
-        _rc_prof_name="${_rc_cli_prof}"
-        
-        # First, check if it's a harness name in our catalog
-        if [ -n "${HARNESS_MODEL_CATALOG[${_rc_prof_name}]}" ]; then
-            # Use first model from the harness as default (format: "model|provider model|provider ...")
-            _rc_models_str="${HARNESS_MODEL_CATALOG[${_rc_prof_name}]}"
-            
-            # Parse first model (format: "model|provider")
-            _rc_first_entry=$(echo "${_rc_models_str}" | awk '{print $1}')
-            _rc_first_model=$(echo "${_rc_first_entry}" | cut -d'|' -f1)
-            _rc_first_provider=$(echo "${_rc_first_entry}" | cut -d'|' -f2)
-            
-            # Parse second model
-            _rc_second_entry=$(echo "${_rc_models_str}" | awk '{print $2}')
-            _rc_second_model=$(echo "${_rc_second_entry}" | cut -d'|' -f1)
-            _rc_second_provider=$(echo "${_rc_second_entry}" | cut -d'|' -f2)
-            # Fallback to first if second not available
-            _rc_second_model=${_rc_second_model:-${_rc_first_model}}
-            _rc_second_provider=${_rc_second_provider:-${_rc_first_provider}}
-            
-            [ -z "${_rc_wm}" ] && _rc_wm="${_rc_first_model}"
-            [ -z "${_rc_wp}" ] && _rc_wp="${_rc_first_provider}"
-            [ -z "${_rc_wa}" ] && _rc_wa="${_rc_first_provider}"
-            [ -z "${_rc_rm}" ] && _rc_rm="${_rc_first_model}"
-            [ -z "${_rc_rp}" ] && _rc_rp="${_rc_first_provider}"
-            [ -z "${_rc_ra}" ] && _rc_ra="${_rc_first_provider}"
-            [ -z "${_rc_mm}" ] && _rc_mm="${_rc_second_model}"
-            [ -z "${_rc_mp}" ] && _rc_mp="${_rc_second_provider}"
-            [ -z "${_rc_ma}" ] && _rc_ma="${_rc_second_provider}"
-            [ -z "${_rc_max_iter}" ] && _rc_max_iter=30
-            _rc_cur_prof="${_rc_prof_name}"
-            echo "[PROFILE] Loaded dynamic harness profile: ${_rc_prof_name} (model: ${_rc_first_model}, provider: ${_rc_first_provider})" >&2
+    if [ -n "${_rc_cli_prof}" ] || [ -n "${RALPH_PROFILE:-}" ]; then
+        if [ -n "${_rc_cli_prof}" ]; then
+            _rc_prof_name="${_rc_cli_prof}"
+            _rc_prof_fatal="true"
+        else
+            _rc_prof_name="${RALPH_PROFILE:-}"
+            _rc_prof_fatal="false"
+        fi
+
+        # Dynamic harness profile (harness name or harness|tier)
+        if set_profile_spec "${_rc_prof_name}"; then
+            [ -z "${_rc_wm}" ] && _rc_wm="${_PS_WM}"
+            [ -z "${_rc_wp}" ] && _rc_wp="${_PS_WP}"
+            if [ "${_rc_agent_set}" != "true" ]; then
+                _rc_wa="${_PS_AGENT}"
+                _rc_ra="${_PS_AGENT}"
+                _rc_ma="${_PS_AGENT}"
+            fi
+            [ -z "${_rc_rm}" ] && _rc_rm="${_PS_RM}"
+            [ -z "${_rc_rp}" ] && _rc_rp="${_PS_RP}"
+            [ -z "${_rc_mm}" ] && _rc_mm="${_PS_MM}"
+            [ -z "${_rc_mp}" ] && _rc_mp="${_PS_MP}"
+            if [ "${_rc_max_iter_set}" != "true" ]; then
+                _rc_max_iter=30
+            fi
+            _rc_cur_prof="${_PS_HARNESS}|${_PS_TIER}"
+            echo "[PROFILE] Loaded dynamic harness profile: ${_rc_cur_prof} (model: ${_PS_WM}, provider: ${_PS_WP})" >&2
         # Backwards compatibility: load from JSON file
         elif _rc_prof_path="$(resolve_profile_path "${_rc_prof_name}")"; then
             [ -z "${_rc_wm}" ] && _rc_wm=$(jq -r '.workerModel // empty' "${_rc_prof_path}")
@@ -1218,8 +1434,11 @@ run_cli() {
             _rc_retries=$(jq -r '.maxRetries // 3' "${_rc_prof_path}")
             _rc_cur_prof="${_rc_prof_name}"
         else
-            echo "[ERROR] Profile not found: ${_rc_prof_name} (not in harness catalog or file)" >&2
-            exit 1
+            if [ "${_rc_prof_fatal}" = "true" ]; then
+                echo "[ERROR] Profile not found: ${_rc_prof_name} (not a known harness and not a profile file)" >&2
+                exit 1
+            fi
+            echo "[WARNING] RALPH_PROFILE '${_rc_prof_name}' not found in harness catalog or as a profile file" >&2
         fi
     fi
 
@@ -1316,11 +1535,30 @@ run_cli() {
             *) echo "[WARNING] Unknown adaptive strategy '${_rc_strategy}'; falling back to 'balanced'." >&2; _rc_strategy="balanced" ;;
         esac
         if [ -z "${_rc_cur_prof}" ]; then
+            # Start from the dynamic harness catalog using the strategy's start tier
+            _rc_start_harness="$(get_harness_for_agent "${_rc_wa}")"
+            if [ -z "${_rc_start_harness}" ]; then
+                _rc_start_harness="goose/goose"
+            fi
             case "${_rc_strategy}" in
-                quality) _rc_cur_prof="ultra" ;;
-                price)   _rc_cur_prof="lite" ;;
-                *)       _rc_cur_prof="pro" ;;
+                quality) _rc_start_tier="ultra" ;;
+                price)   _rc_start_tier="lite" ;;
+                *)       _rc_start_tier="pro" ;;
             esac
+            _rc_cur_prof="${_rc_start_harness}|${_rc_start_tier}"
+            if set_profile_spec "${_rc_cur_prof}"; then
+                [ -z "${_rc_wm}" ] && _rc_wm="${_PS_WM}"
+                [ -z "${_rc_wp}" ] && _rc_wp="${_PS_WP}"
+                if [ "${_rc_agent_set}" != "true" ]; then
+                    _rc_wa="${_PS_AGENT}"
+                    _rc_ra="${_PS_AGENT}"
+                    _rc_ma="${_PS_AGENT}"
+                fi
+                [ -z "${_rc_rm}" ] && _rc_rm="${_PS_RM}"
+                [ -z "${_rc_rp}" ] && _rc_rp="${_PS_RP}"
+                [ -z "${_rc_mm}" ] && _rc_mm="${_PS_MM}"
+                [ -z "${_rc_mp}" ] && _rc_mp="${_PS_MP}"
+            fi
             echo "[ADAPTIVE] Strategy '${_rc_strategy}' (start profile '${_rc_cur_prof}')" >&2
         else
             echo "[ADAPTIVE] Strategy '${_rc_strategy}' (starting from '${_rc_cur_prof}')" >&2
@@ -1355,11 +1593,14 @@ run_cli() {
                 if [ "${_rc_adaptive}" = "true" ]; then
                     _rc_new_prof=$(get_adaptive_profile_switch "${_rc_strategy}" "resource" "${_rc_cur_prof}")
                     if [ -n "${_rc_new_prof}" ] && [ "${_rc_new_prof}" != "${_rc_cur_prof}" ]; then
-                        _rc_sw=$(switch_adaptive_profile "${_rc_session}" "${_rc_new_prof}" "${_rc_cur_prof}")
-                        _rc_cur_prof="${_rc_new_prof}"
-                        IFS='|' read -r _rc_wm _rc_wp _rc_wa _rc_rm _rc_rp _rc_ra _rc_mm _rc_mp _rc_ma _rc_max_iter _rc_backoff _rc_throttle _rc_retries <<EOF
-${_rc_sw}
-EOF
+                        if switch_adaptive_profile "${_rc_session}" "${_rc_new_prof}" "${_rc_cur_prof}"; then
+                            _rc_cur_prof="${_rc_new_prof}"
+                            _rc_wm="${_SAP_WM}"; _rc_wp="${_SAP_WP}"; _rc_wa="${_SAP_WA}"
+                            _rc_rm="${_SAP_RM}"; _rc_rp="${_SAP_RP}"; _rc_ra="${_SAP_RA}"
+                            _rc_mm="${_SAP_MM}"; _rc_mp="${_SAP_MP}"; _rc_ma="${_SAP_MA}"
+                            _rc_max_iter="${_SAP_MI}"; _rc_backoff="${_SAP_IB}"
+                            _rc_throttle="${_SAP_TD}"; _rc_retries="${_SAP_MR}"
+                        fi
                         echo "[ADAPTIVE] Retrying work phase with upgraded profile '${_rc_cur_prof}'" >&2
                         _rc_w_out=$(call_llm_worker "${_rc_task}" "${_rc_feedback}" "${_rc_iter}" "${_rc_session}" "${_rc_wm}" "${_rc_wp}" "${_rc_wa}" "${_rc_wg}" "${_rc_existing}" || true)
                     fi
@@ -1401,11 +1642,14 @@ EOF
                 if [ "${_rc_adaptive}" = "true" ]; then
                     _rc_new_prof=$(get_adaptive_profile_switch "${_rc_strategy}" "resource" "${_rc_cur_prof}")
                     if [ -n "${_rc_new_prof}" ] && [ "${_rc_new_prof}" != "${_rc_cur_prof}" ]; then
-                        _rc_sw=$(switch_adaptive_profile "${_rc_session}" "${_rc_new_prof}" "${_rc_cur_prof}")
-                        _rc_cur_prof="${_rc_new_prof}"
-                        IFS='|' read -r _rc_wm _rc_wp _rc_wa _rc_rm _rc_rp _rc_ra _rc_mm _rc_mp _rc_ma _rc_max_iter _rc_backoff _rc_throttle _rc_retries <<EOF
-${_rc_sw}
-EOF
+                        if switch_adaptive_profile "${_rc_session}" "${_rc_new_prof}" "${_rc_cur_prof}"; then
+                            _rc_cur_prof="${_rc_new_prof}"
+                            _rc_wm="${_SAP_WM}"; _rc_wp="${_SAP_WP}"; _rc_wa="${_SAP_WA}"
+                            _rc_rm="${_SAP_RM}"; _rc_rp="${_SAP_RP}"; _rc_ra="${_SAP_RA}"
+                            _rc_mm="${_SAP_MM}"; _rc_mp="${_SAP_MP}"; _rc_ma="${_SAP_MA}"
+                            _rc_max_iter="${_SAP_MI}"; _rc_backoff="${_SAP_IB}"
+                            _rc_throttle="${_SAP_TD}"; _rc_retries="${_SAP_MR}"
+                        fi
                         echo "[ADAPTIVE] Retrying review phase with upgraded profile '${_rc_cur_prof}'" >&2
                         _rc_r_out=$(call_llm_reviewer "${_rc_task}" "${_rc_work}" "${_rc_summary}" "${_rc_iter}" "${_rc_session}" "${_rc_rm}" "${_rc_rp}" "${_rc_ra}" "${_rc_rg}" "${_rc_existing}" || true)
                     fi
@@ -1461,11 +1705,14 @@ EOF
                     _rc_new_prof=$(get_adaptive_profile_switch "${_rc_strategy}" "${_rc_trigger}" "${_rc_cur_prof}")
                 fi
                 if [ -n "${_rc_new_prof}" ] && [ "${_rc_new_prof}" != "${_rc_cur_prof}" ]; then
-                    _rc_sw=$(switch_adaptive_profile "${_rc_session}" "${_rc_new_prof}" "${_rc_cur_prof}")
-                    _rc_cur_prof="${_rc_new_prof}"
-                    IFS='|' read -r _rc_wm _rc_wp _rc_wa _rc_rm _rc_rp _rc_ra _rc_mm _rc_mp _rc_ma _rc_max_iter _rc_backoff _rc_throttle _rc_retries <<EOF
-${_rc_sw}
-EOF
+                    if switch_adaptive_profile "${_rc_session}" "${_rc_new_prof}" "${_rc_cur_prof}"; then
+                        _rc_cur_prof="${_rc_new_prof}"
+                        _rc_wm="${_SAP_WM}"; _rc_wp="${_SAP_WP}"; _rc_wa="${_SAP_WA}"
+                        _rc_rm="${_SAP_RM}"; _rc_rp="${_SAP_RP}"; _rc_ra="${_SAP_RA}"
+                        _rc_mm="${_SAP_MM}"; _rc_mp="${_SAP_MP}"; _rc_ma="${_SAP_MA}"
+                        _rc_max_iter="${_SAP_MI}"; _rc_backoff="${_SAP_IB}"
+                        _rc_throttle="${_SAP_TD}"; _rc_retries="${_SAP_MR}"
+                    fi
                 fi
             fi
         fi
@@ -1756,11 +2003,17 @@ handle_run() {
             *) _hrun_strategy="balanced" ;;
         esac
         if [ -z "${_hrun_cur_prof}" ]; then
+            # Start from the dynamic harness catalog using the strategy's start tier
+            _hrun_start_harness="$(get_harness_for_agent "${_hrun_wa}")"
+            if [ -z "${_hrun_start_harness}" ]; then
+                _hrun_start_harness="goose/goose"
+            fi
             case "${_hrun_strategy}" in
-                quality) _hrun_cur_prof="ultra" ;;
-                price)   _hrun_cur_prof="lite" ;;
-                *)       _hrun_cur_prof="pro" ;;
+                quality) _hrun_start_tier="ultra" ;;
+                price)   _hrun_start_tier="lite" ;;
+                *)       _hrun_start_tier="pro" ;;
             esac
+            _hrun_cur_prof="${_hrun_start_harness}|${_hrun_start_tier}"
         fi
     fi
 
@@ -1780,11 +2033,14 @@ handle_run() {
                 if [ "${_hrun_adaptive}" = "true" ]; then
                     _hrun_new_prof=$(get_adaptive_profile_switch "${_hrun_strategy}" "resource" "${_hrun_cur_prof}")
                     if [ -n "${_hrun_new_prof}" ] && [ "${_hrun_new_prof}" != "${_hrun_cur_prof}" ]; then
-                        _hrun_sw=$(switch_adaptive_profile "${_hrun_session}" "${_hrun_new_prof}" "${_hrun_cur_prof}")
-                        _hrun_cur_prof="${_hrun_new_prof}"
-                        IFS='|' read -r _hrun_wm _hrun_wp _hrun_wa _hrun_rm _hrun_rp _hrun_ra _hrun_mm _hrun_mp _hrun_ma _hrun_max_iter _hrun_backoff _hrun_throttle _hrun_retries <<EOF
-${_hrun_sw}
-EOF
+                        if switch_adaptive_profile "${_hrun_session}" "${_hrun_new_prof}" "${_hrun_cur_prof}"; then
+                            _hrun_cur_prof="${_hrun_new_prof}"
+                            _hrun_wm="${_SAP_WM}"; _hrun_wp="${_SAP_WP}"; _hrun_wa="${_SAP_WA}"
+                            _hrun_rm="${_SAP_RM}"; _hrun_rp="${_SAP_RP}"; _hrun_ra="${_SAP_RA}"
+                            _hrun_mm="${_SAP_MM}"; _hrun_mp="${_SAP_MP}"; _hrun_ma="${_SAP_MA}"
+                            _hrun_max_iter="${_SAP_MI}"; _hrun_backoff="${_SAP_IB}"
+                            _hrun_throttle="${_SAP_TD}"; _hrun_retries="${_SAP_MR}"
+                        fi
                         _hrun_w_out=$(call_llm_worker "${_hrun_task}" "${_hrun_feedback}" "${_hrun_i}" "${_hrun_session}" "${_hrun_wm}" "${_hrun_wp}" "${_hrun_wa}" "${_hrun_wg}" "${_hrun_existing}" || true)
                     fi
                 fi
@@ -1820,11 +2076,14 @@ EOF
                 if [ "${_hrun_adaptive}" = "true" ]; then
                     _hrun_new_prof=$(get_adaptive_profile_switch "${_hrun_strategy}" "resource" "${_hrun_cur_prof}")
                     if [ -n "${_hrun_new_prof}" ] && [ "${_hrun_new_prof}" != "${_hrun_cur_prof}" ]; then
-                        _hrun_sw=$(switch_adaptive_profile "${_hrun_session}" "${_hrun_new_prof}" "${_hrun_cur_prof}")
-                        _hrun_cur_prof="${_hrun_new_prof}"
-                        IFS='|' read -r _hrun_wm _hrun_wp _hrun_wa _hrun_rm _hrun_rp _hrun_ra _hrun_mm _hrun_mp _hrun_ma _hrun_max_iter _hrun_backoff _hrun_throttle _hrun_retries <<EOF
-${_hrun_sw}
-EOF
+                        if switch_adaptive_profile "${_hrun_session}" "${_hrun_new_prof}" "${_hrun_cur_prof}"; then
+                            _hrun_cur_prof="${_hrun_new_prof}"
+                            _hrun_wm="${_SAP_WM}"; _hrun_wp="${_SAP_WP}"; _hrun_wa="${_SAP_WA}"
+                            _hrun_rm="${_SAP_RM}"; _hrun_rp="${_SAP_RP}"; _hrun_ra="${_SAP_RA}"
+                            _hrun_mm="${_SAP_MM}"; _hrun_mp="${_SAP_MP}"; _hrun_ma="${_SAP_MA}"
+                            _hrun_max_iter="${_SAP_MI}"; _hrun_backoff="${_SAP_IB}"
+                            _hrun_throttle="${_SAP_TD}"; _hrun_retries="${_SAP_MR}"
+                        fi
                         _hrun_r_out=$(call_llm_reviewer "${_hrun_task}" "${_hrun_work}" "${_hrun_summary}" "${_hrun_i}" "${_hrun_session}" "${_hrun_rm}" "${_hrun_rp}" "${_hrun_ra}" "${_hrun_rg}" "${_hrun_existing}" || true)
                     fi
                 fi
@@ -1872,11 +2131,14 @@ EOF
                 _hrun_new_prof=$(get_adaptive_profile_switch "${_hrun_strategy}" "${_hrun_trigger}" "${_hrun_cur_prof}")
             fi
             if [ -n "${_hrun_new_prof}" ] && [ "${_hrun_new_prof}" != "${_hrun_cur_prof}" ]; then
-                _hrun_sw=$(switch_adaptive_profile "${_hrun_session}" "${_hrun_new_prof}" "${_hrun_cur_prof}")
-                _hrun_cur_prof="${_hrun_new_prof}"
-                IFS='|' read -r _hrun_wm _hrun_wp _hrun_wa _hrun_rm _hrun_rp _hrun_ra _hrun_mm _hrun_mp _hrun_ma _hrun_max_iter _hrun_backoff _hrun_throttle _hrun_retries <<EOF
-${_hrun_sw}
-EOF
+                if switch_adaptive_profile "${_hrun_session}" "${_hrun_new_prof}" "${_hrun_cur_prof}"; then
+                    _hrun_cur_prof="${_hrun_new_prof}"
+                    _hrun_wm="${_SAP_WM}"; _hrun_wp="${_SAP_WP}"; _hrun_wa="${_SAP_WA}"
+                    _hrun_rm="${_SAP_RM}"; _hrun_rp="${_SAP_RP}"; _hrun_ra="${_SAP_RA}"
+                    _hrun_mm="${_SAP_MM}"; _hrun_mp="${_SAP_MP}"; _hrun_ma="${_SAP_MA}"
+                    _hrun_max_iter="${_SAP_MI}"; _hrun_backoff="${_SAP_IB}"
+                    _hrun_throttle="${_SAP_TD}"; _hrun_retries="${_SAP_MR}"
+                fi
             fi
         fi
 
@@ -2151,7 +2413,7 @@ handle_get_models() {
         return
     fi
 
-    if [ -z "${HARNESS_MODEL_CATALOG[${_hgm_harness}]}" ]; then
+    if [ -z "${HARNESS_MODEL_CATALOG[${_hgm_harness}]:-}" ]; then
         _hgm_available=""
         for _hgm_key in "${!HARNESS_MODEL_CATALOG[@]}"; do
             if [ -z "${_hgm_available}" ]; then
@@ -2165,16 +2427,20 @@ handle_get_models() {
         return
     fi
 
-    _hgm_models_str="${HARNESS_MODEL_CATALOG[${_hgm_harness}]}"
+    _hgm_models_str="${HARNESS_MODEL_CATALOG[${_hgm_harness}]:-}"
     _hgm_models_json=""
+    _hgm_count=0
     for _hgm_model in ${_hgm_models_str}; do
+        _hgm_model_name=$(printf '%s' "${_hgm_model}" | cut -d'|' -f1)
+        _hgm_model_provider=$(printf '%s' "${_hgm_model}" | cut -d'|' -f2)
+        _hgm_model_tier=$(printf '%s' "${_hgm_model}" | cut -d'|' -f3)
         if [ -z "${_hgm_models_json}" ]; then
-            _hgm_models_json="\"${_hgm_model}\""
+            _hgm_models_json="{\"model\": \"${_hgm_model_name}\", \"provider\": \"${_hgm_model_provider}\", \"tier\": \"${_hgm_model_tier}\"}"
         else
-            _hgm_models_json="${_hgm_models_json}, \"${_hgm_model}\""
+            _hgm_models_json="${_hgm_models_json}, {\"model\": \"${_hgm_model_name}\", \"provider\": \"${_hgm_model_provider}\", \"tier\": \"${_hgm_model_tier}\"}"
         fi
+        _hgm_count=$((_hgm_count + 1))
     done
-    _hgm_count=$(printf '%s' "${_hgm_models_str}" | wc -w)
     _hgm_res=$(jq -cn --arg harness "${_hgm_harness}" --argjson models "[${_hgm_models_json}]" --argjson count "${_hgm_count}" '{success: true, harness: $harness, models: $models, count: $count}')
     json_response "${_hgm_id}" "${_hgm_res}"
 }

@@ -84,41 +84,139 @@ $script:MonitorProvider = Coalesce $env:RALPH_MONITOR_PROVIDER (Coalesce $env:RA
 $script:MonitorAgent = Coalesce $env:RALPH_MONITOR_AGENT 'goose'
 
 # AI Harness Model Catalog - Dynamic model profiles based on underlying AI harness
-# Each entry: @{ model = 'model-name'; provider = 'provider-name' }
-    # AI Harness Model Catalog - Dynamic model profiles based on underlying AI harness
-    # Each entry: @{ model = 'model-name'; provider = 'provider-name'; tier = 'lite|plus|pro|ultra' }
-    $script:HarnessModelCatalog = @{
-        'anthropic/claude'   = @(
-            @{ model='fable-5-2'; provider='anthropic'; tier='ultra' },
-            @{ model='opus-5-5'; provider='anthropic'; tier='pro' },
-            @{ model='sonnet-5-5'; provider='anthropic'; tier='plus' },
-            @{ model='haiku-5-5'; provider='anthropic'; tier='lite' }
-        )
-        'openai/codex'       = @(
-            @{ model='gpt-6.2-astra'; provider='openai'; tier='ultra' },
-            @{ model='gpt-6.2-sol'; provider='openai'; tier='pro' },
-            @{ model='gpt-6.1-terra'; provider='openai'; tier='plus' },
-            @{ model='gpt-6-luna'; provider='openai'; tier='lite' }
-        )
-        'gemini/antigravity' = @(
-            @{ model='gemini-4-carbon'; provider='google'; tier='ultra' },
-            @{ model='gemini-4-neon'; provider='google'; tier='pro' },
-            @{ model='gemini-4-argon'; provider='google'; tier='plus' },
-            @{ model='gemini-4-hydrogen'; provider='google'; tier='lite' }        
-        )
-        'copilot/copilot'    = @(
-            @{ model='kimi-k3.1-pro'; provider='copilot'; tier='ultra' },
-            @{ model='deepseek-v4.1-flash-1017'; provider='copilot'; tier='pro' },
-            @{ model='phi-4-reasoning'; provider='copilot'; tier='plus' },
-            @{ model='phi-4-mini-reasoning'; provider='copilot'; tier='lite' }
-        )
-        'goose/goose'        = @(
-            @{ model='nvidia-nemotron-3-ultra-550b-a55b'; provider='NVIDIA'; tier='ultra' },
-            @{ model='nvidia-nemotron-3_5-super-vl-120b-a12b'; provider='NVIDIA'; tier='pro' },
-            @{ model='nvidia-nemotron-3-5-lightning-30b-a3b'; provider='NVIDIA'; tier='plus' },
-            @{ model='nvidia-nemotron-3_5-bolt-e4b'; provider='NVIDIA'; tier='lite' }
-        )
+# Each entry: @{ model = 'model-name'; provider = 'provider-name'; tier = 'lite|plus|pro|ultra' }
+$script:HarnessModelCatalog = @{
+    'anthropic/claude'   = @(
+        @{ model='fable-5-2'; provider='anthropic'; tier='ultra' },
+        @{ model='opus-5-5'; provider='anthropic'; tier='pro' },
+        @{ model='sonnet-5-5'; provider='anthropic'; tier='plus' },
+        @{ model='haiku-5-5'; provider='anthropic'; tier='lite' }
+    )
+    'openai/codex'       = @(
+        @{ model='gpt-6.2-astra'; provider='openai'; tier='ultra' },
+        @{ model='gpt-6.2-sol'; provider='openai'; tier='pro' },
+        @{ model='gpt-6.1-terra'; provider='openai'; tier='plus' },
+        @{ model='gpt-6-luna'; provider='openai'; tier='lite' }
+    )
+    'gemini/antigravity' = @(
+        @{ model='gemini-4-carbon'; provider='google'; tier='ultra' },
+        @{ model='gemini-4-neon'; provider='google'; tier='pro' },
+        @{ model='gemini-4-hydrogen'; provider='google'; tier='plus' },
+        @{ model='gemini-4-argon'; provider='google'; tier='lite' }
+    )
+    'copilot/copilot'    = @(
+        @{ model='kimi-k3.1-pro'; provider='copilot'; tier='ultra' },
+        @{ model='deepseek-v4.1-flash-1017'; provider='copilot'; tier='pro' },
+        @{ model='phi-4-reasoning'; provider='copilot'; tier='plus' },
+        @{ model='phi-4-mini-reasoning'; provider='copilot'; tier='lite' }
+    )
+    'goose/goose'        = @(
+        @{ model='nvidia-nemotron-3-ultra-550b-a55b'; provider='NVIDIA'; tier='ultra' },
+        @{ model='nvidia-nemotron-3_5-super-vl-120b-a12b'; provider='NVIDIA'; tier='pro' },
+        @{ model='nvidia-nemotron-3-5-lightning-30b-a3b'; provider='NVIDIA'; tier='plus' },
+        @{ model='nvidia-nemotron-3_5-bolt-e4b'; provider='NVIDIA'; tier='lite' }
+    )
+}
+
+# Harness -> agent CLI mapping (which CLI binary drives the harness)
+$script:HarnessAgents = @{
+    'anthropic/claude'   = 'claude'
+    'openai/codex'       = 'codex'
+    'gemini/antigravity' = 'antigravity'
+    'copilot/copilot'    = 'copilot'
+    'goose/goose'        = 'goose'
+}
+
+# Agent -> harness mapping (used to pick a harness for adaptive switching)
+$script:AgentHarnesses = @{
+    'claude'      = 'anthropic/claude'
+    'anthropic'   = 'anthropic/claude'
+    'codex'       = 'openai/codex'
+    'openai'      = 'openai/codex'
+    'antigravity' = 'gemini/antigravity'
+    'gemini'      = 'gemini/antigravity'
+    'google'      = 'gemini/antigravity'
+    'copilot'     = 'copilot/copilot'
+    'goose'       = 'goose/goose'
+}
+
+# Canonical tier ordering (highest capability/cost first)
+$script:TierOrder = @('ultra', 'pro', 'plus', 'lite')
+
+function Get-HarnessAgent {
+    param([string]$Harness)
+    if ($Harness -and $script:HarnessAgents.ContainsKey($Harness)) { return $script:HarnessAgents[$Harness] }
+    return ''
+}
+
+function Get-HarnessForAgent {
+    param([string]$Agent)
+    if ($Agent -and $script:AgentHarnesses.ContainsKey($Agent)) { return $script:AgentHarnesses[$Agent] }
+    return ''
+}
+
+function Get-HarnessModels {
+    param([string]$Harness)
+    if ($Harness -and $script:HarnessModelCatalog.ContainsKey($Harness)) { return @($script:HarnessModelCatalog[$Harness]) }
+    return @()
+}
+
+function Get-HarnessModelByTier {
+    param([string]$Harness, [string]$Tier)
+    $models = Get-HarnessModels -Harness $Harness
+    foreach ($m in $models) { if ($m.tier -eq $Tier) { return $m } }
+    return $null
+}
+
+function Resolve-ProfileSpec {
+    <#
+    .SYNOPSIS
+        Resolves a dynamic profile spec into concrete worker/reviewer/monitor settings.
+    .DESCRIPTION
+        Accepted forms:
+          'goose/goose'       -> harness with the default tier (ultra)
+          'goose/goose|pro'   -> harness with an explicit tier
+        Returns $null when the value does not name a known harness. Legacy JSON
+        profiles (lite/plus/pro/super/ultra) are resolved by Resolve-ProfilePath.
+    #>
+    param([string]$ProfileValue, [string]$DefaultTier = 'ultra')
+    if (-not $ProfileValue) { return $null }
+    $harness = $ProfileValue.Trim()
+    $tier = $DefaultTier
+    if ($harness -match '\|') {
+        $parts = $harness -split '\|'
+        $harness = $parts[0].Trim()
+        if ($parts.Count -gt 1 -and $parts[1].Trim()) { $tier = $parts[1].Trim().ToLower() }
     }
+    $models = Get-HarnessModels -Harness $harness
+    if ($models.Count -eq 0) { return $null }
+
+    $workerIndex = -1
+    for ($i = 0; $i -lt $models.Count; $i++) {
+        if ($models[$i].tier -eq $tier) { $workerIndex = $i; break }
+    }
+    if ($workerIndex -lt 0) { $workerIndex = 0 }
+
+    $worker   = $models[$workerIndex]
+    $reviewer = $models[($workerIndex + 1) % $models.Count]
+    $monitor  = $models[($workerIndex + 2) % $models.Count]
+
+    $agent = Get-HarnessAgent -Harness $harness
+    if (-not $agent) { $agent = [string]$worker.provider }
+
+    return @{
+        Spec             = "$harness|$($worker.tier)"
+        Harness          = $harness
+        Tier             = $worker.tier
+        Agent            = $agent
+        WorkerModel      = $worker.model
+        WorkerProvider   = $worker.provider
+        ReviewerModel    = $reviewer.model
+        ReviewerProvider = $reviewer.provider
+        MonitorModel     = $monitor.model
+        MonitorProvider  = $monitor.provider
+    }
+}
 
 $script:CurrentProfile = ''
 $script:CLITask = ''
@@ -128,27 +226,23 @@ $script:CLISessionId = ''
 if ($env:RALPH_PROFILE) {
     $profileName = $env:RALPH_PROFILE
     
-    # First, check if it's a harness name in our catalog
-    if ($script:HarnessModelCatalog.ContainsKey($profileName)) {
-        # Use first model from the harness as default (models are objects with model/provider)
-        $models = $script:HarnessModelCatalog[$profileName]
-        $firstModel = $models[0]
-        $secondModel = if ($models.Count -gt 1) { $models[1] } else { $models[0] }
-        
-        $script:WorkerModel = $firstModel.model
-        $script:WorkerProvider = $firstModel.provider
-        $script:WorkerAgent = $firstModel.provider
-        $script:ReviewerModel = $firstModel.model
-        $script:ReviewerProvider = $firstModel.provider
-        $script:ReviewerAgent = $firstModel.provider
-        $script:MonitorModel = $secondModel.model
-        $script:MonitorProvider = $secondModel.provider
-        $script:MonitorAgent = $secondModel.provider
+    # First, check if it is a dynamic harness profile (harness or harness|tier)
+    $harnessSpec = Resolve-ProfileSpec -ProfileValue $profileName
+    if ($harnessSpec) {
+        $script:WorkerModel = $harnessSpec.WorkerModel
+        $script:WorkerProvider = $harnessSpec.WorkerProvider
+        $script:WorkerAgent = $harnessSpec.Agent
+        $script:ReviewerModel = $harnessSpec.ReviewerModel
+        $script:ReviewerProvider = $harnessSpec.ReviewerProvider
+        $script:ReviewerAgent = $harnessSpec.Agent
+        $script:MonitorModel = $harnessSpec.MonitorModel
+        $script:MonitorProvider = $harnessSpec.MonitorProvider
+        $script:MonitorAgent = $harnessSpec.Agent
         $script:MaxIterations = 30
         $script:WorkGuidelines = Join-Path $script:RalphRecipeDir 'ralph-work.yaml'
         $script:ReviewGuidelines = Join-Path $script:RalphRecipeDir 'ralph-review.yaml'
-        $script:CurrentProfile = $profileName
-        Write-Host "[PROFILE] Loaded dynamic harness profile: $profileName (model: $($script:WorkerModel), provider: $($script:WorkerProvider))" -ForegroundColor Cyan
+        $script:CurrentProfile = $harnessSpec.Spec
+        Write-Host "[PROFILE] Loaded dynamic harness profile: $($harnessSpec.Spec) (model: $($script:WorkerModel), provider: $($script:WorkerProvider))" -ForegroundColor Cyan
     }
     # Backwards compatibility: load from JSON file
     elseif (Test-Path $profileName) {
@@ -618,9 +712,11 @@ function Call-WorkerLlm {
         switch ($WorkerAgent) {
             'anthropic' { return $prompt | claude --model $WorkerModel --print 2>$null }
             'claude'    { return $prompt | claude --model $WorkerModel --print 2>$null }
-            'openai'    { return $prompt | openai chat --model $WorkerModel --no-stream 2>$null }
-            'google'    { return $prompt | gemini --model $WorkerModel --format=text 2>$null }
-            'gemini'    { return $prompt | gemini --model $WorkerModel --format=text 2>$null }
+            'openai'      { return $prompt | codex exec --model $WorkerModel --no-stream 2>$null }
+            'codex'       { return $prompt | codex exec --model $WorkerModel --no-stream 2>$null }
+            'google'      { return $prompt | agy -p --model $WorkerModel --format=text 2>$null }
+            'gemini'      { return $prompt | agy -p --model $WorkerModel --format=text 2>$null }
+            'antigravity' { return $prompt | agy -p --model $WorkerModel --format=text 2>$null }
             'copilot'   { return $prompt | copilot -p --allow-all-tools 2>$null }
             'goose' {
                 $gooseParams = @("task=$Task", "sessionId=$SessionId")
@@ -665,9 +761,11 @@ function Call-ReviewerLlm {
         switch ($ReviewerAgent) {
             'anthropic' { return $prompt | claude --model $ReviewerModel --print 2>$null }
             'claude'    { return $prompt | claude --model $ReviewerModel --print 2>$null }
-            'openai'    { return $prompt | openai chat --model $ReviewerModel --no-stream 2>$null }
-            'google'    { return $prompt | gemini --model $ReviewerModel --format=text 2>$null }
-            'gemini'    { return $prompt | gemini --model $ReviewerModel --format=text 2>$null }
+            'openai'      { return $prompt | codex exec --model $ReviewerModel --no-stream 2>$null }
+            'codex'       { return $prompt | codex exec --model $ReviewerModel --no-stream 2>$null }
+            'google'      { return $prompt | agy -p --model $ReviewerModel --format=text 2>$null }
+            'gemini'      { return $prompt | agy -p --model $ReviewerModel --format=text 2>$null }
+            'antigravity' { return $prompt | agy -p --model $ReviewerModel --format=text 2>$null }
             'copilot'   { return $prompt | copilot -p --allow-all-tools 2>$null }
             'goose' {
                 $gooseParams = @("task=$Task", "work=$Work", "summary=$Summary", "sessionId=$SessionId")
@@ -728,9 +826,12 @@ function Call-MonitorLlm {
         switch ($MonitorAgent) {
             'anthropic' { return $Prompt | claude --model $MonitorModel --print 2>$null }
             'claude'    { return $Prompt | claude --model $MonitorModel --print 2>$null }
-            'openai'    { return $Prompt | openai chat --model $MonitorModel --no-stream 2>$null }
-            'google'    { return $Prompt | gemini --model $MonitorModel --format=text 2>$null }
-            'gemini'    { return $Prompt | gemini --model $MonitorModel --format=text 2>$null }
+            'openai'      { return $Prompt | codex exec --model $MonitorModel --no-stream 2>$null }
+            'codex'       { return $Prompt | codex exec --model $MonitorModel --no-stream 2>$null }
+            'google'      { return $Prompt | agy -p --model $MonitorModel --format=text 2>$null }
+            'gemini'      { return $Prompt | agy -p --model $MonitorModel --format=text 2>$null }
+            'antigravity' { return $Prompt | agy -p --model $MonitorModel --format=text 2>$null }
+            'copilot'     { return $Prompt | copilot -p --allow-all-tools 2>$null }
             'goose' {
                 $env:GOOSE_MODEL = $MonitorModel
                 $env:GOOSE_PROVIDER = $MonitorProvider
@@ -743,7 +844,7 @@ function Call-MonitorLlm {
                     if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
                 }
             }
-            default { return $Prompt | openai chat --model $MonitorModel --no-stream 2>$null }
+            default { return $Prompt | codex exec --model $MonitorModel --no-stream 2>$null }
         }
     }
 }
@@ -807,10 +908,20 @@ function Parse-ReviewerOutput {
 # =============================================================================
 # ADAPTIVE PROFILE SWITCHING
 # =============================================================================
+# Adaptive switching now operates on the dynamic harness catalog.
+# Orders are expressed as tier sequences (tier = capability/cost class of a model).
 $script:AdaptiveOrders = @{
-    'quality'  = @{ resource = @('ultra','super','pro','plus','lite'); quality = @('lite','plus','pro','super','ultra'); start = 'ultra' }
-    'price'    = @{ resource = @('ultra','super','pro','plus','lite'); quality = @('lite','plus','pro','super','ultra'); start = 'lite' }
-    'balanced' = @{ resource = @('pro','plus','lite'); quality = @('pro','super','ultra'); start = 'pro' }
+    'quality'  = @{ resource = @('ultra','pro','plus','lite'); quality = @('lite','plus','pro','ultra'); start = 'ultra' }
+    'price'    = @{ resource = @('ultra','pro','plus','lite'); quality = @('lite','plus','pro','ultra'); start = 'lite' }
+    'balanced' = @{ resource = @('pro','plus','lite'); quality = @('lite','plus','pro','ultra'); start = 'pro' }
+}
+
+# Legacy (file based) profile orders kept for backwards compatibility with the
+# static JSON profiles in profiles/ (lite, plus, pro, super, ultra).
+$script:LegacyAdaptiveOrders = @{
+    'quality'  = @{ resource = @('ultra','super','pro','plus','lite'); quality = @('lite','plus','pro','super','ultra') }
+    'price'    = @{ resource = @('ultra','super','pro','plus','lite'); quality = @('lite','plus','pro','super','ultra') }
+    'balanced' = @{ resource = @('pro','plus','lite'); quality = @('pro','super','ultra') }
 }
 
 function Test-ResourceTrigger {
@@ -841,12 +952,35 @@ function Get-AdaptiveProfileSwitch {
     if (-not $script:AdaptiveOrders.ContainsKey($Strategy)) { return $null }
     $order = $script:AdaptiveOrders[$Strategy][$Trigger]
     if (-not $order) { return $null }
-    if (-not $CurrentProfile) { return $order[0] }
-    $idx = [Array]::IndexOf($order, $CurrentProfile)
-    if ($idx -eq -1) { return $order[0] }
-    return $order[($idx + 1) % $order.Count]
+
+    # Dynamic path: the current profile is a harness spec ("harness|tier")
+    if ($CurrentProfile -and $CurrentProfile -match '\|') {
+        $parts = $CurrentProfile -split '\|'
+        $harness = $parts[0].Trim()
+        $tier = if ($parts.Count -gt 1 -and $parts[1].Trim()) { $parts[1].Trim().ToLower() } else { 'ultra' }
+        if (-not (Get-HarnessModels -Harness $harness)) { return $null }
+        $idx = [Array]::IndexOf($order, $tier)
+        if ($idx -eq -1) {
+            $nextTier = $order[0]
+        }
+        else {
+            $nextTier = $order[($idx + 1) % $order.Count]
+        }
+        if (-not (Get-HarnessModelByTier -Harness $harness -Tier $nextTier)) { return $null }
+        return "$harness|$nextTier"
+    }
+
+    # Legacy path: static JSON profile names (lite/plus/pro/super/ultra)
+    $legacyOrder = $script:LegacyAdaptiveOrders[$Strategy][$Trigger]
+    if (-not $legacyOrder) { return $null }
+    if (-not $CurrentProfile) { return $legacyOrder[0] }
+    $legacyIdx = [Array]::IndexOf($legacyOrder, $CurrentProfile)
+    if ($legacyIdx -eq -1) { return $legacyOrder[0] }
+    return $legacyOrder[($legacyIdx + 1) % $legacyOrder.Count]
 }
 
+# Legacy static JSON profile support (backwards compatibility only - adaptive
+# switching uses the dynamic harness catalog).
 function Apply-Profile {
     param([string]$SessionId, [string]$ProfileName)
     $profilePath = Resolve-ProfilePath -ProfileName $ProfileName
@@ -884,7 +1018,37 @@ function Apply-Profile {
 function Switch-AdaptiveProfile {
     param([string]$SessionId, [string]$NewProfile, [string]$OldProfile = '')
     Write-Host "[ADAPTIVE] Switching profile from '$OldProfile' to '$NewProfile'" -ForegroundColor Cyan
-    Apply-Profile -SessionId $SessionId -ProfileName $NewProfile
+
+    if ($NewProfile -and $NewProfile -match '\|') {
+        # Dynamic harness profile: resolve models straight from the catalog
+        $spec = Resolve-ProfileSpec -ProfileValue $NewProfile
+        if (-not $spec) {
+            Write-Host "[ERROR] Unknown harness profile: $NewProfile" -ForegroundColor Red
+            return $null
+        }
+        $existing = JsonToDict (Get-Config -SessionId $SessionId)
+        $maxIterations = if ($existing -and $existing['maxIterations']) { [int]$existing['maxIterations'] }
+                         elseif ($script:MaxIterations) { [int]$script:MaxIterations } else { 30 }
+        $initialBackoff = if ($existing -and $existing['initialBackoff']) { [int]$existing['initialBackoff'] }
+                          elseif ($script:InitialBackoff) { [int]$script:InitialBackoff } else { 5 }
+        $throttleDelay = if ($existing -and $null -ne $existing['throttleDelay']) { [int]$existing['throttleDelay'] }
+                         elseif ($null -ne $script:ThrottleDelay) { [int]$script:ThrottleDelay } else { 0 }
+        $maxRetries = if ($existing -and $existing['maxRetries']) { [int]$existing['maxRetries'] }
+                      elseif ($script:MaxRetries) { [int]$script:MaxRetries } else { 3 }
+        Set-Config -SessionId $SessionId `
+            -WorkerModel $spec.WorkerModel -WorkerProvider $spec.WorkerProvider `
+            -ReviewerModel $spec.ReviewerModel -ReviewerProvider $spec.ReviewerProvider `
+            -MonitorModel $spec.MonitorModel -MonitorProvider $spec.MonitorProvider `
+            -MaxIterations $maxIterations -CrossModelEnforced $true `
+            -WorkerAgent $spec.Agent -ReviewerAgent $spec.Agent -MonitorAgent $spec.Agent `
+            -WorkGuidelines $script:WorkGuidelines -ReviewGuidelines $script:ReviewGuidelines `
+            -InitialBackoff $initialBackoff -ThrottleDelay $throttleDelay -MaxRetries $maxRetries
+    }
+    else {
+        # Legacy static JSON profile
+        Apply-Profile -SessionId $SessionId -ProfileName $NewProfile
+    }
+
     $config = JsonToDict (Get-Config -SessionId $SessionId)
     return @{
         workerModel      = Coalesce $config['workerModel'] ''
@@ -917,7 +1081,7 @@ function Run-Cli {
         Write-Host "  CLI Mode    : .\ralph-wiggum-loop.ps1 [options] `"task description`" [--profile pro]"
         Write-Host ""
         Write-Host "Options:"
-        Write-Host "  --profile PROFILE            Quality profile (lite, plus, pro, super, ultra)"
+        Write-Host "  --profile PROFILE            Profile: harness (anthropic/claude, openai/codex, gemini/antigravity, copilot/copilot, goose/goose), harness|tier, or legacy JSON profile name"
         Write-Host "  --worker-model MODEL         Worker model (default: `$env:RALPH_WORKER_MODEL)"
         Write-Host "  --worker-provider PROVIDER   Worker provider (default: `$env:RALPH_WORKER_PROVIDER)"
         Write-Host "  --worker-agent AGENT         Worker agent (default: `$env:RALPH_WORKER_AGENT)"
@@ -958,6 +1122,8 @@ function Run-Cli {
     $throttleDelay = $script:ThrottleDelay
     $enableAdaptive = $false
     $adaptiveStrategy = 'balanced'
+    $cliMaxIterationsSet = $false
+    $cliAgentSet = $false
     $currentProfile = Coalesce $script:CurrentProfile ''
     $cliProfile = ''
     $workspace = $script:Workspace
@@ -967,17 +1133,17 @@ function Run-Cli {
         switch ($cliArgs[$i]) {
             '--worker-model'      { $workerModel = $cliArgs[$i+1]; $i++ }
             '--worker-provider'   { $workerProvider = $cliArgs[$i+1]; $i++ }
-            '--worker-agent'      { $workerAgent = $cliArgs[$i+1]; $i++ }
+            '--worker-agent'      { $workerAgent = $cliArgs[$i+1]; $cliAgentSet = $true; $i++ }
             '--reviewer-model'    { $reviewerModel = $cliArgs[$i+1]; $i++ }
             '--reviewer-provider' { $reviewerProvider = $cliArgs[$i+1]; $i++ }
-            '--reviewer-agent'    { $reviewerAgent = $cliArgs[$i+1]; $i++ }
-            '--max-iterations'    { $maxIterations = [int]$cliArgs[$i+1]; $i++ }
+            '--reviewer-agent'    { $reviewerAgent = $cliArgs[$i+1]; $cliAgentSet = $true; $i++ }
+            '--max-iterations'    { $maxIterations = [int]$cliArgs[$i+1]; $cliMaxIterationsSet = $true; $i++ }
             '--work-guidelines'   { $workGuidelines = $cliArgs[$i+1]; $i++ }
             '--review-guidelines' { $reviewGuidelines = $cliArgs[$i+1]; $i++ }
             '--session-id'        { $script:CLISessionId = $cliArgs[$i+1]; $i++ }
             '--monitor-model'     { $monitorModel = $cliArgs[$i+1]; $i++ }
             '--monitor-provider'  { $monitorProvider = $cliArgs[$i+1]; $i++ }
-            '--monitor-agent'     { $monitorAgent = $cliArgs[$i+1]; $i++ }
+            '--monitor-agent'     { $monitorAgent = $cliArgs[$i+1]; $cliAgentSet = $true; $i++ }
             '--max-retries'       { $maxRetries = [int]$cliArgs[$i+1]; $i++ }
             '--initial-backoff'   { $initialBackoff = [int]$cliArgs[$i+1]; $i++ }
             '--throttle-delay'    { $throttleDelay = [int]$cliArgs[$i+1]; $i++ }
@@ -1016,54 +1182,90 @@ function Run-Cli {
             $adaptiveStrategy = 'balanced'
         }
         if (-not $currentProfile) {
-            $currentProfile = $script:AdaptiveOrders[$adaptiveStrategy]['start']
+            # Start from the dynamic harness catalog using the strategy's start tier
+            $startHarness = Get-HarnessForAgent -Agent $workerAgent
+            if (-not $startHarness) { $startHarness = 'goose/goose' }
+            $startTier = $script:AdaptiveOrders[$adaptiveStrategy]['start']
+            $currentProfile = "$startHarness|$startTier"
         }
-        $profilePath = Resolve-ProfilePath -ProfileName $currentProfile
-        if ($profilePath) {
-            $profile = Get-Content $profilePath -Raw | ConvertFrom-Json
-            $props = @($profile.PSObject.Properties.Name)
-            if (-not $workerModel -and ($props -contains 'workerModel'))         { $workerModel = $profile.workerModel }
-            if (-not $workerProvider -and ($props -contains 'workerProvider'))   { $workerProvider = $profile.workerProvider }
-            if (-not $workerAgent -and ($props -contains 'workerAgent'))         { $workerAgent = $profile.workerAgent }
-            if (-not $reviewerModel -and ($props -contains 'reviewerModel'))     { $reviewerModel = $profile.reviewerModel }
-            if (-not $reviewerProvider -and ($props -contains 'reviewerProvider')) { $reviewerProvider = $profile.reviewerProvider }
-            if (-not $reviewerAgent -and ($props -contains 'reviewerAgent'))     { $reviewerAgent = $profile.reviewerAgent }
-            if (-not $monitorModel -and ($props -contains 'monitorModel'))       { $monitorModel = $profile.monitorModel }
-            if (-not $monitorProvider -and ($props -contains 'monitorProvider')) { $monitorProvider = $profile.monitorProvider }
-            if (-not $monitorAgent -and ($props -contains 'monitorAgent'))       { $monitorAgent = $profile.monitorAgent }
-        }
-    }
-
-    if ($cliProfile) {
-        $profilePath = Resolve-ProfilePath -ProfileName $cliProfile
-        if ($profilePath) {
-            $profile = Get-Content $profilePath -Raw | ConvertFrom-Json
-            $props = @($profile.PSObject.Properties.Name)
-            if (-not $workerModel -and ($props -contains 'workerModel'))           { $workerModel = $profile.workerModel }
-            if (-not $workerProvider -and ($props -contains 'workerProvider'))     { $workerProvider = $profile.workerProvider }
-            if ($props -contains 'workerAgent' -and $profile.workerAgent)          { $workerAgent = $profile.workerAgent }
-            if (-not $reviewerModel -and ($props -contains 'reviewerModel'))       { $reviewerModel = $profile.reviewerModel }
-            if (-not $reviewerProvider -and ($props -contains 'reviewerProvider')) { $reviewerProvider = $profile.reviewerProvider }
-            if ($props -contains 'reviewerAgent' -and $profile.reviewerAgent)      { $reviewerAgent = $profile.reviewerAgent }
-            if (-not $monitorModel -and ($props -contains 'monitorModel'))         { $monitorModel = $profile.monitorModel }
-            if (-not $monitorProvider -and ($props -contains 'monitorProvider'))   { $monitorProvider = $profile.monitorProvider }
-            if ($props -contains 'monitorAgent' -and $profile.monitorAgent)        { $monitorAgent = $profile.monitorAgent }
-            if ($props -contains 'maxIterations' -and $profile.maxIterations)      { $maxIterations = [int]$profile.maxIterations }
-            if ($props -contains 'initialBackoff' -and $profile.initialBackoff)    { $initialBackoff = [int]$profile.initialBackoff }
-            if ($props -contains 'throttleDelay' -and $null -ne $profile.throttleDelay) { $throttleDelay = [int]$profile.throttleDelay }
-            if ($props -contains 'maxRetries' -and $profile.maxRetries)            { $maxRetries = [int]$profile.maxRetries }
-            $currentProfile = (Split-Path $profilePath -Leaf) -replace '\.json$', ''
-            Write-Host "[PROFILE] Loaded profile: $currentProfile" -ForegroundColor Cyan
+        $adaptiveSpec = Resolve-ProfileSpec -ProfileValue $currentProfile
+        if ($adaptiveSpec) {
+            if (-not $workerModel)       { $workerModel = $adaptiveSpec.WorkerModel }
+            if (-not $workerProvider)    { $workerProvider = $adaptiveSpec.WorkerProvider }
+            if (-not $cliAgentSet)       { $workerAgent = $adaptiveSpec.Agent }
+            if (-not $reviewerModel)     { $reviewerModel = $adaptiveSpec.ReviewerModel }
+            if (-not $reviewerProvider)  { $reviewerProvider = $adaptiveSpec.ReviewerProvider }
+            if (-not $cliAgentSet)       { $reviewerAgent = $adaptiveSpec.Agent }
+            if (-not $monitorModel)      { $monitorModel = $adaptiveSpec.MonitorModel }
+            if (-not $monitorProvider)   { $monitorProvider = $adaptiveSpec.MonitorProvider }
+            if (-not $cliAgentSet)       { $monitorAgent = $adaptiveSpec.Agent }
         }
         else {
-            Write-Host "[ERROR] Profile not found: $cliProfile" -ForegroundColor Red
-            exit 1
+            # Legacy static JSON profile
+            $profilePath = Resolve-ProfilePath -ProfileName $currentProfile
+            if ($profilePath) {
+                $profile = Get-Content $profilePath -Raw | ConvertFrom-Json
+                $props = @($profile.PSObject.Properties.Name)
+                if (-not $workerModel -and ($props -contains 'workerModel'))         { $workerModel = $profile.workerModel }
+                if (-not $workerProvider -and ($props -contains 'workerProvider'))   { $workerProvider = $profile.workerProvider }
+                if (-not $workerAgent -and ($props -contains 'workerAgent'))         { $workerAgent = $profile.workerAgent }
+                if (-not $reviewerModel -and ($props -contains 'reviewerModel'))     { $reviewerModel = $profile.reviewerModel }
+                if (-not $reviewerProvider -and ($props -contains 'reviewerProvider')) { $reviewerProvider = $profile.reviewerProvider }
+                if (-not $reviewerAgent -and ($props -contains 'reviewerAgent'))     { $reviewerAgent = $profile.reviewerAgent }
+                if (-not $monitorModel -and ($props -contains 'monitorModel'))       { $monitorModel = $profile.monitorModel }
+                if (-not $monitorProvider -and ($props -contains 'monitorProvider')) { $monitorProvider = $profile.monitorProvider }
+                if (-not $monitorAgent -and ($props -contains 'monitorAgent'))       { $monitorAgent = $profile.monitorAgent }
+            }
         }
     }
-
+    if ($cliProfile) {
+        # Dynamic harness profile (harness or harness|tier)
+        $cliSpec = Resolve-ProfileSpec -ProfileValue $cliProfile
+        if ($cliSpec) {
+            if (-not $workerModel)       { $workerModel = $cliSpec.WorkerModel }
+            if (-not $workerProvider)    { $workerProvider = $cliSpec.WorkerProvider }
+            if (-not $cliAgentSet)       { $workerAgent = $cliSpec.Agent }
+            if (-not $reviewerModel)     { $reviewerModel = $cliSpec.ReviewerModel }
+            if (-not $reviewerProvider)  { $reviewerProvider = $cliSpec.ReviewerProvider }
+            if (-not $cliAgentSet)       { $reviewerAgent = $cliSpec.Agent }
+            if (-not $monitorModel)      { $monitorModel = $cliSpec.MonitorModel }
+            if (-not $monitorProvider)   { $monitorProvider = $cliSpec.MonitorProvider }
+            if (-not $cliAgentSet)       { $monitorAgent = $cliSpec.Agent }
+            if (-not $cliMaxIterationsSet) { $maxIterations = 30 }
+            $currentProfile = $cliSpec.Spec
+            Write-Host "[PROFILE] Loaded dynamic harness profile: $($cliSpec.Spec) (model: $($cliSpec.WorkerModel), provider: $($cliSpec.WorkerProvider))" -ForegroundColor Cyan
+        }
+        else {
+            # Legacy static JSON profile
+            $profilePath = Resolve-ProfilePath -ProfileName $cliProfile
+            if ($profilePath) {
+                $profile = Get-Content $profilePath -Raw | ConvertFrom-Json
+                $props = @($profile.PSObject.Properties.Name)
+                if (-not $workerModel -and ($props -contains 'workerModel'))           { $workerModel = $profile.workerModel }
+                if (-not $workerProvider -and ($props -contains 'workerProvider'))     { $workerProvider = $profile.workerProvider }
+                if ($props -contains 'workerAgent' -and $profile.workerAgent)          { $workerAgent = $profile.workerAgent }
+                if (-not $reviewerModel -and ($props -contains 'reviewerModel'))       { $reviewerModel = $profile.reviewerModel }
+                if (-not $reviewerProvider -and ($props -contains 'reviewerProvider')) { $reviewerProvider = $profile.reviewerProvider }
+                if ($props -contains 'reviewerAgent' -and $profile.reviewerAgent)      { $reviewerAgent = $profile.reviewerAgent }
+                if (-not $monitorModel -and ($props -contains 'monitorModel'))         { $monitorModel = $profile.monitorModel }
+                if (-not $monitorProvider -and ($props -contains 'monitorProvider'))   { $monitorProvider = $profile.monitorProvider }
+                if ($props -contains 'monitorAgent' -and $profile.monitorAgent)        { $monitorAgent = $profile.monitorAgent }
+                if ($props -contains 'maxIterations' -and $profile.maxIterations)      { $maxIterations = [int]$profile.maxIterations }
+                if ($props -contains 'initialBackoff' -and $profile.initialBackoff)    { $initialBackoff = [int]$profile.initialBackoff }
+                if ($props -contains 'throttleDelay' -and $null -ne $profile.throttleDelay) { $throttleDelay = [int]$profile.throttleDelay }
+                if ($props -contains 'maxRetries' -and $profile.maxRetries)            { $maxRetries = [int]$profile.maxRetries }
+                $currentProfile = (Split-Path $profilePath -Leaf) -replace '\.json$', ''
+                Write-Host "[PROFILE] Loaded profile: $currentProfile" -ForegroundColor Cyan
+            }
+            else {
+                Write-Host "[ERROR] Profile not found: $cliProfile (not a known harness and not a profile file)" -ForegroundColor Red
+                exit 1
+            }
+        }
+    }
     if (-not $workerModel -or -not $workerProvider -or -not $reviewerModel -or -not $reviewerProvider) {
         if ([Console]::IsInputRedirected -or (-not [Environment]::UserInteractive)) {
-            [Console]::Error.WriteLine("[ERROR] Missing required worker/reviewer model or provider in non-interactive mode. Use --profile <lite|plus|pro|super|ultra> or pass --worker-model, --worker-provider, --reviewer-model, --reviewer-provider.")
+            [Console]::Error.WriteLine("[ERROR] Missing required worker/reviewer model or provider in non-interactive mode. Use --profile <harness|harness|tier|lite|plus|pro|super|ultra> or pass --worker-model, --worker-provider, --reviewer-model, --reviewer-provider.")
             exit 1
         }
     }
@@ -1497,10 +1699,11 @@ function Handle-Run {
             $adaptiveStrategy = 'balanced'
         }
         if (-not $currentProfile) {
-            $currentProfile = $script:AdaptiveOrders[$adaptiveStrategy]['start']
+            $startHarness = Get-HarnessForAgent -Agent $workerAgent
+            if (-not $startHarness) { $startHarness = 'goose/goose' }
+            $currentProfile = "$startHarness|$($script:AdaptiveOrders[$adaptiveStrategy]['start'])"
         }
     }
-
     $feedback = ''
 
     for ($i = 1; $i -le $maxIterations; $i++) {
@@ -1757,12 +1960,66 @@ function global:Handle-ListTools {
                     reviewGuidelines         = @{ type = 'string'; description = 'Path to review recipe or guidelines file' }
                     enableAdaptive           = @{ type = 'boolean'; description = 'Enable adaptive profile switching (default: false)' }
                     adaptiveStrategy         = @{ type = 'string'; enum = @('quality', 'price', 'balanced'); description = 'Adaptive switching strategy (default: balanced)' }
+                    profile                  = @{ type = 'string'; description = "Profile spec for adaptive switching: harness name or harness|tier (e.g. 'goose/goose|pro')" }
                 }
                 required   = @('task', 'workerModel', 'workerProvider', 'reviewerModel', 'reviewerProvider')
             }
         }
+        @{
+            name        = 'ralph_loop_list_harnesses'
+            description = 'List all AI harnesses available in the dynamic model catalog'
+            inputSchema = @{
+                type       = 'object'
+                properties = @{}
+            }
+        }
+        @{
+            name        = 'ralph_loop_get_models'
+            description = 'Get the available models for a given AI harness (model, provider and tier)'
+            inputSchema = @{
+                type       = 'object'
+                properties = @{
+                    harness = @{ type = 'string'; description = "Harness name (anthropic/claude, openai/codex, gemini/antigravity, copilot/copilot, goose/goose)" }
+                }
+                required   = @('harness')
+            }
+        }
     )
     $result = [ordered]@{ tools = $tools }
+    return json-response -Id $Id -Result ([PSCustomObject]$result)
+}
+
+function Handle-ListHarnesses {
+    param($Id, $Params)
+    $harnesses = @($script:HarnessModelCatalog.Keys | Sort-Object)
+    $result = [ordered]@{
+        success   = $true
+        harnesses = $harnesses
+        count     = $harnesses.Count
+    }
+    return json-response -Id $Id -Result ([PSCustomObject]$result)
+}
+
+function Handle-GetModels {
+    param($Id, $Params)
+    $paramsObj = JsonToDict $Params
+    $harness = Coalesce (Coalesce $paramsObj['harness'] $paramsObj['agent']) ''
+    if (-not $harness) {
+        return json-response -Id $Id -Error (mcp-error -Code -32602 -Message 'Harness parameter is required')
+    }
+    if (-not $script:HarnessModelCatalog.ContainsKey($harness)) {
+        $available = ($script:HarnessModelCatalog.Keys | Sort-Object) -join ', '
+        return json-response -Id $Id -Error (mcp-error -Code -32602 -Message "Unknown harness: $harness. Available: $available")
+    }
+    $models = @($script:HarnessModelCatalog[$harness] | ForEach-Object {
+        [ordered]@{ model = $_.model; provider = $_.provider; tier = $_.tier }
+    })
+    $result = [ordered]@{
+        success = $true
+        harness = $harness
+        models  = $models
+        count   = $models.Count
+    }
     return json-response -Id $Id -Result ([PSCustomObject]$result)
 }
 
@@ -1780,6 +2037,8 @@ function Invoke-RalphToolDispatch {
         '^ral(ph|f)_loop_reset$'         { return Handle-Reset        -Id $Id -Params $ToolArgs }
         '^ral(ph|f)_loop_block$'         { return Handle-Block        -Id $Id -Params $ToolArgs }
         '^ral(ph|f)_loop_run$'           { return Handle-Run          -Id $Id -Params $ToolArgs }
+        '^ral(ph|f)_loop_list_harnesses$' { return Handle-ListHarnesses -Id $Id -Params $ToolArgs }
+        '^ral(ph|f)_loop_get_models$'     { return Handle-GetModels     -Id $Id -Params $ToolArgs }
         default {
             return json-response -Id $Id -Error (mcp-error -Code -32601 -Message "Unknown tool: $ToolName")
         }

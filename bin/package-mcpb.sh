@@ -97,8 +97,8 @@ render_platform_mcp_json() {
     target_platform="$3"
 
     if [ "${target_platform}" = "sh" ]; then
-        cmd="sh"
-        args_json='["-c", "command -v jq >/dev/null 2>&1 || { for d in /opt/homebrew/bin /usr/local/bin; do [ -d \"$d\" ] && [ \"${PATH#*$d}\" = \"$PATH\" ] && PATH=\"$d:$PATH\"; done; export PATH; }; exec sh \"$0\" \"$@\"", "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.sh", "--stdio"]'
+        cmd="bash"
+        args_json='["-c", "command -v jq >/dev/null 2>&1 || { for d in /opt/homebrew/bin /usr/local/bin; do [ -d \"$d\" ] && [ \"${PATH#*$d}\" = \"$PATH\" ] && PATH=\"$d:$PATH\"; done; export PATH; }; exec bash \"$0\" \"$@\"", "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.sh", "--stdio"]'
     else
         cmd="pwsh"
         args_json='["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.ps1", "-Stdio"]'
