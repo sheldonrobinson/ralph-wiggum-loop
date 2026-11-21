@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "ralph-wiggum-loop.pwsh",
   "display_name": "Ralph Wiggum Loop (PowerShell)",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Autonomous iterative AI development MCP server (PowerShell edition for Windows) with spec-driven worker/reviewer SHIP/REVISE loops.",
   "author": {
     "name": "sheldonrobinson",
@@ -96,6 +96,14 @@
     {
       "name": "ralph_loop_run",
       "description": "Execute a full automated Worker/Reviewer Ralph Loop run for a task."
+    },
+    {
+      "name": "ralph_loop_list_harnesses",
+      "description": "List all available AI harnesses (anthropic/claude, openai/codex, gemini/antigravity, copilot/copilot, goose/goose)."
+    },
+    {
+      "name": "ralph_loop_get_models",
+      "description": "Get available models (model, provider, tier) for a given harness."
     }
   ]
 }
