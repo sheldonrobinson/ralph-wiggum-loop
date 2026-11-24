@@ -3,7 +3,7 @@
   "name": "io.github.sheldonrobinson/ralph-wiggum-loop",
   "title": "Ralph Wiggum Loop",
   "description": "Autonomous iterative AI development MCP server with spec-driven worker/reviewer SHIP/REVISE loops.",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "websiteUrl": "https://sheldonrobinson.github.io/ralph-wiggum-loop",
   "repository": {
     "url": "https://github.com/sheldonrobinson/ralph-wiggum-loop",
@@ -12,9 +12,9 @@
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/sheldonrobinson/ralph-wiggum-loop/releases/download/v1.2.2/ralph-wiggum-loop.sh.mcpb",
-      "version": "1.2.2",
-      "fileSha256": "4e68965fabfe3e138d8abb5eb922bc1ed79034497fb8019765cb46e388bd2c05",
+      "identifier": "https://github.com/sheldonrobinson/ralph-wiggum-loop/releases/download/v1.2.3/ralph-wiggum-loop.sh.mcpb",
+      "version": "1.2.3",
+      "fileSha256": "36a186b236ce108352c1dec9aa036e914fce96ae3711169291efcb9e22e48d6a",
       "runtimeHint": "sh",
       "transport": {
         "type": "stdio"
@@ -41,9 +41,9 @@
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/sheldonrobinson/ralph-wiggum-loop/releases/download/v1.2.2/ralph-wiggum-loop.pwsh.mcpb",
-      "version": "1.2.2",
-      "fileSha256": "1f38405df2fd354a1956fa0a0f5e64985554db624bfff2011fac3ed2b5975386",
+      "identifier": "https://github.com/sheldonrobinson/ralph-wiggum-loop/releases/download/v1.2.3/ralph-wiggum-loop.pwsh.mcpb",
+      "version": "1.2.3",
+      "fileSha256": "d70afc410b4981a2e101c4625432d5f916a7508e4b2f6c76695031a8bfaf0954",
       "runtimeHint": "pwsh",
       "transport": {
         "type": "stdio"
