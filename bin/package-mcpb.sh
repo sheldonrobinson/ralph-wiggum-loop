@@ -101,7 +101,7 @@ render_platform_mcp_json() {
         args_json='["-c", "command -v jq >/dev/null 2>&1 || { for d in /opt/homebrew/bin /usr/local/bin; do [ -d \"$d\" ] && [ \"${PATH#*$d}\" = \"$PATH\" ] && PATH=\"$d:$PATH\"; done; export PATH; }; exec bash \"$0\" \"$@\"", "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.sh", "--stdio"]'
     else
         cmd="pwsh"
-        args_json='["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.ps1", "-Stdio"]'
+        args_json='["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.ps1", "--stdio"]'
     fi
 
     rendered="$(sed 's/{{MCP_STDIO_ARGS_JSON}}/[]/g' "${template_path}" | jq \
@@ -113,7 +113,7 @@ render_platform_mcp_json() {
         printf '%s\n' "${rendered}" | jq '.mcpServers["ralph-wiggum-loop-powershell"] = {
             "type": "stdio",
             "command": "powershell.exe",
-            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.ps1", "-Stdio"],
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${PLUGIN_ROOT}/bin/ralph-wiggum-loop.ps1", "--stdio"],
             "cwd": "${PLUGIN_ROOT}",
             "env": {
                 "RALPH_STATE_BASE": "${PLUGIN_DATA}/state",
@@ -323,7 +323,7 @@ cat > "${SERVER_JSON_PATH}" <<EOF
       "packageArguments": [
         {
           "type": "named",
-          "name": "-Stdio",
+          "name": "--stdio",
           "description": "Run the PowerShell MCP server over standard input/output (stdio)"
         }
       ],
