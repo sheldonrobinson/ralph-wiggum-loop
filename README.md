@@ -15,6 +15,44 @@ This project is a **cross-platform Agent Plugin** (`plugin.json`, `mcp.json`, `.
 - **Windows (PowerShell):** `bin/ralph-wiggum-loop.ps1` (using `bin/mcp-sdk.psm1`)
 - **Polyglot Runner:** `bin/script-runner.sh` / `bin/script-runner.ps1` (runs in both POSIX `sh`/`bash` and PowerShell)
 
+## Prerequisites
+
+- **All platforms:** [`jq`](https://jqlang.org/) must be installed and available on `PATH`. The Bash CLI, MCP server, and packaging script use it for JSON processing. The PowerShell implementation also uses `jq`: it is registered in `$script:SafeCommands` in `bin/ralph-wiggum-loop.ps1` as an allowed command for loop operations. PowerShell's MCP JSON-RPC transport itself is implemented in PowerShell.
+- **Linux / macOS / WSL (Bash):** Bash is required. When using WSL, install `jq` inside the WSL distribution.
+- **Windows (PowerShell):** Windows PowerShell 5.1 or PowerShell 7+ (`pwsh`) and `jq` are required.
+- **Bash `streamable-http` mode:** `socat` or `nc` must also be installed. The PowerShell HTTP service uses the built-in .NET `HttpListener` instead.
+- **Running worker/reviewer loops:** At least one supported LLM CLI must be installed and configured. This is not needed merely to start the MCP server or list its tools.
+
+Install `jq` using your platform's package manager:
+
+```bash
+# Ubuntu / Debian / WSL
+sudo apt update && sudo apt install -y jq
+
+# macOS
+brew install jq
+```
+
+```powershell
+# Windows (PowerShell)
+# For WSL, use the WSL installation command above instead.
+winget install jqlang.jq
+```
+
+Verify that the CLI and server can find it:
+
+```bash
+# Bash
+command -v jq
+jq --version
+```
+
+```powershell
+# PowerShell
+Get-Command jq
+jq --version
+```
+
 ## Install Skill (`.agents/skills/`)
 
 Per the [Agent Skills Specification](https://agentskills.io/specification), install the skill to `.agents/skills/`:
@@ -34,9 +72,10 @@ Copy-Item -Recurse -Force skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-l
 
 | MCP Server Name | OS / Runtime | Transport | Command / Endpoint |
 |---|---|---|---|
-| `ralph-wiggum-loop` | Linux / macOS (Bash) | `stdio` | `./bin/script-runner.sh ralph-wiggum-loop --stdio` |
-| `ralph-wiggum-loop-pwsh` | Windows (PowerShell 7+) | `stdio` | `pwsh -NoProfile -ExecutionPolicy Bypass -File ${PLUGIN_ROOT}/bin/script-runner.ps1 ralph-wiggum-loop --stdio` |
-| `ralph-wiggum-loop-powershell` | Windows (PowerShell 5.1) | `stdio` | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${PLUGIN_ROOT}/bin/script-runner.ps1 ralph-wiggum-loop --stdio` |
+| `ralph-wiggum-loop` | Linux / macOS (Bash) | `stdio` | `./bin/script-runner ralph-wiggum-loop --stdio` |
+| `ralph-wiggum-loop-sh` | Linux / macOS (POSIX `sh` wrapper) | `stdio` | `sh ${PLUGIN_ROOT}/bin/script-runner.sh --use-sh ralph-wiggum-loop --stdio` |
+| `ralph-wiggum-loop-pwsh` | Windows (PowerShell 7+) | `stdio` | `pwsh -NoProfile -ExecutionPolicy Bypass -File ${PLUGIN_ROOT}/bin/script-runner.ps1 --use-pwsh ralph-wiggum-loop --stdio` |
+| `ralph-wiggum-loop-powershell` | Windows (PowerShell 5.1) | `stdio` | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${PLUGIN_ROOT}/bin/script-runner.ps1 --use-pwsh ralph-wiggum-loop --stdio` |
 | `ralph-wiggum-loop-http` | Cross-Platform | `streamable-http` | `http://127.0.0.1:8080/mcp` |
 
 ## Quick Start
@@ -60,6 +99,8 @@ Copy-Item -Recurse -Force skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-l
   ```powershell
   pwsh -NoProfile -ExecutionPolicy Bypass -File "<install-folder>\bin\script-runner.ps1" --use-pwsh ralph-wiggum-loop --stdio
   ```
+
+> Use `--stdio` exactly (not `-Stdio`). MCP stdio is a persistent JSON-RPC channel: the client keeps stdin open while sending requests, and the server streams responses without waiting for EOF. Closing stdin ends the server session. Both Bash and PowerShell environments require `jq` on `PATH` as described in [Prerequisites](#prerequisites).
 
 ### 3. MCP Server (`streamable-http` Service Mode)
 - **Linux / macOS (Bash):**

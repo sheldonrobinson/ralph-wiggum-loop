@@ -66,7 +66,7 @@ declare -A HARNESS_MODEL_CATALOG=(
     [openai/codex]="gpt-6.2-astra|openai|ultra gpt-6.2-sol|openai|pro gpt-6.1-terra|openai|plus gpt-6-luna|openai|lite"
     [gemini/antigravity]="gemini-4-carbon|google|ultra gemini-4-neon|google|pro gemini-4-hydrogen|google|plus gemini-4-argon|google|lite"
     [copilot/copilot]="kimi-k3.1-pro|copilot|ultra deepseek-v4.1-flash-1017|copilot|pro phi-4-reasoning|copilot|plus phi-4-mini-reasoning|copilot|lite"
-    [goose/goose]="nvidia-nemotron-3-ultra-550b-a55b|NVIDIA|ultra nvidia-nemotron-3_5-super-vl-120b-a12b|NVIDIA|pro nvidia-nemotron-3-5-lightning-30b-a3b|NVIDIA|plus nvidia-nemotron-3_5-bolt-e4b|NVIDIA|lite"
+    [goose/goose]="moonshotai/kimi-k3.1-pro|NVIDIA|ultra nvidia/nemotron-3.5-super-vl-120b-a12b|NVIDIA|pro nvidia/nemotron-3.5-lightning-30b-a3b|NVIDIA|plus nvidia/nemotron-3.5-bolt-e4b|NVIDIA|lite"
 )
 
 # Harness -> agent CLI mapping (which CLI binary drives the harness)

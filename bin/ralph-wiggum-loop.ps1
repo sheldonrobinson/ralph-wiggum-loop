@@ -111,10 +111,10 @@ $script:HarnessModelCatalog = @{
         @{ model='phi-4-mini-reasoning'; provider='copilot'; tier='lite' }
     )
     'goose/goose'        = @(
-        @{ model='nvidia-nemotron-3-ultra-550b-a55b'; provider='NVIDIA'; tier='ultra' },
-        @{ model='nvidia-nemotron-3_5-super-vl-120b-a12b'; provider='NVIDIA'; tier='pro' },
-        @{ model='nvidia-nemotron-3-5-lightning-30b-a3b'; provider='NVIDIA'; tier='plus' },
-        @{ model='nvidia-nemotron-3_5-bolt-e4b'; provider='NVIDIA'; tier='lite' }
+        @{ model='moonshotai/kimi-k3.1-pro'; provider='NVIDIA'; tier='ultra' },
+        @{ model='nvidia/nemotron-3.5-super-vl-120b-a12b'; provider='NVIDIA'; tier='pro' },
+        @{ model='nvidia/nemotron-3.5-lightning-30b-a3b'; provider='NVIDIA'; tier='plus' },
+        @{ model='nvidia/nemotron-3.5-bolt-e4b'; provider='NVIDIA'; tier='lite' }
     )
 }
 

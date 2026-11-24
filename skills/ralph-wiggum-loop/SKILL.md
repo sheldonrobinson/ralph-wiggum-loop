@@ -41,6 +41,44 @@ Per the [Agent Skills Specification](https://agentskills.io/specification), inst
 
 ---
 
+## Prerequisites
+
+- **Both implementations require [`jq`](https://jqlang.org/) on `PATH`.** Bash uses it for JSON processing throughout the CLI and MCP server. PowerShell also uses it: `bin/ralph-wiggum-loop.ps1` includes `jq` in `$script:SafeCommands` as an allowed command for loop operations. The PowerShell MCP JSON-RPC transport itself is implemented in PowerShell.
+- **Windows:** Windows PowerShell 5.1+ or PowerShell 7+ (`pwsh`), plus `jq`.
+- **Linux / macOS:** Bash 4+ and `jq`; install `socat` or `nc` as well when using `streamable-http` mode.
+- **WSL:** Install `jq` inside the WSL distribution when using the Bash implementation there.
+
+Install `jq` if it is not already available:
+
+```bash
+# Ubuntu / Debian / WSL
+sudo apt update && sudo apt install -y jq
+
+# macOS
+brew install jq
+```
+
+```powershell
+# Windows (PowerShell)
+winget install jqlang.jq
+```
+
+Before starting a loop or MCP server, verify that `jq` resolves in the same environment that will launch it:
+
+```bash
+# Bash
+command -v jq
+jq --version
+```
+
+```powershell
+# PowerShell
+Get-Command jq
+jq --version
+```
+
+---
+
 ## 1. Platform Selection Rules (Windows vs. Linux/macOS)
 
 The MCP server implementation and loop runner scripts are **OS-specific**:
