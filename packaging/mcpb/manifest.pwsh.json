@@ -43,8 +43,10 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "${__dirname}/bin/ralph-wiggum-loop.ps1",
-        "-Stdio"
+        "${__dirname}/bin/script-runner.ps1",
+        "--use-pwsh",
+        "ralph-wiggum-loop",
+        "--stdio"
       ],
       "env": {
         "RALPH_STATE_BASE": "${__dirname}/.agents/state",

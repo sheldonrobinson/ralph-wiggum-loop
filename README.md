@@ -54,11 +54,11 @@ Copy-Item -Recurse -Force skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-l
 ### 2. MCP Server (`stdio` Mode)
 - **Linux / macOS (Bash):**
   ```bash
-  ./bin/ralph-wiggum-loop.sh --stdio
+  ./bin/script-runner.sh ralph-wiggum-loop --stdio
   ```
 - **Windows (PowerShell):**
   ```powershell
-  pwsh -NoProfile -ExecutionPolicy Bypass -File .\bin\ralph-wiggum-loop.ps1 --stdio
+  pwsh -NoProfile -ExecutionPolicy Bypass -File "<install-folder>\bin\script-runner.ps1" --use-pwsh ralph-wiggum-loop --stdio
   ```
 
 ### 3. MCP Server (`streamable-http` Service Mode)
@@ -70,6 +70,25 @@ Copy-Item -Recurse -Force skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-l
   ```powershell
   pwsh -NoProfile -ExecutionPolicy Bypass -File .\bin\script-runner.ps1 start-http-server start --host 127.0.0.1 --port 8080
   ```
+
+**Verify the server is responding:**
+```bash
+# Check status
+./bin/script-runner.sh start-http-server status --host 127.0.0.1 --port 8080
+
+# List available tools (POST to the MCP endpoint)
+curl -X POST http://127.0.0.1:8080/mcp \
+  -H "Content-Type: application/json" \
+  -H "mcp-session-id: test-session" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+**Stop the server:**
+```bash
+./bin/script-runner.sh start-http-server stop --host 127.0.0.1 --port 8080
+```
+
+> **Port conflict:** If port `8080` is already in use by another process, the server will fail to bind. Check with `netstat -ano | findstr :8080` (Windows) or `lsof -i :8080` (Linux/macOS), then either free the port or use a different one (`--port 8081`).
 
 ## Documentation
 
