@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "ralph-wiggum-loop.sh",
   "display_name": "Ralph Wiggum Loop (Bash)",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Autonomous iterative AI development MCP server (Bash edition for Linux/macOS) with spec-driven worker/reviewer SHIP/REVISE loops.",
   "author": {
     "name": "sheldonrobinson",

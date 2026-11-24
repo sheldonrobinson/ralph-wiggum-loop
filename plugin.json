@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "ralph-wiggum-loop",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Multi-model iterative development agent plugin - Ralph Loop with cross-model worker/reviewer architecture, spec-driven development skills, Stop hooks, and SHIP/REVISE decision engine.",
   "author": {
     "name": "sheldonrobinson",
