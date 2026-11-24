@@ -2071,13 +2071,13 @@ function global:Invoke-McpCustomMethod {
 # =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
-$pipedLines = @($input)
+# MCP stdio must stream from an open stdin rather than wait for EOF.
 if ($args.Count -eq 0) {
-    if ($pipedLines.Count -gt 0) { $pipedLines | Start-McpServer } else { Start-McpServer }
+    Start-McpServer
     exit 0
 }
 elseif ($args[0] -eq '--stdio') {
-    if ($pipedLines.Count -gt 0) { $pipedLines | Start-McpServer -Transport 'stdio' } else { Start-McpServer -Transport 'stdio' }
+    Start-McpServer -Transport 'stdio'
     exit 0
 }
 elseif ($args[0] -eq '--http' -or $args[0] -eq '--streamable-http') {

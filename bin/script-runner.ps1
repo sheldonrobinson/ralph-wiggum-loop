@@ -135,10 +135,29 @@ if ($ForcedShell -eq "sh") {
 }
 
 $fwdArray = $ForwardArgs.ToArray()
-$pipedInput = @($input)
+$resolvedBase = [System.IO.Path]::GetFullPath($resolved.Base)
+$ralphServerBase = [System.IO.Path]::GetFullPath((Join-Path $RunnerDir 'ralph-wiggum-loop'))
+$isPersistentStdio = ($resolvedBase -eq $ralphServerBase) -and
+    ($fwdArray.Count -eq 0 -or $fwdArray[0] -eq '--stdio')
+
+# MCP clients keep stdin open while waiting for responses. A literal automatic
+# input reference makes pwsh claim redirected stdin before the stdio handoff.
+$pipedInput = @()
+if (-not $isPersistentStdio) {
+    # Preserve finite pipeline forwarding without an automatic-input variable reference.
+    $pipedInput = @(Get-Variable -Name 'input' -ValueOnly)
+}
 
 if ($useWindowsPs -and $null -ne $resolved.PsPath) {
-    if ($pipedInput.Count -gt 0) {
+    if ($isPersistentStdio) {
+        # Start the server with inherited console handles so it receives the
+        # client's open stdin directly instead of the wrapper's pipeline input.
+        $powerShellExe = (Get-Process -Id $PID).Path
+        $serverArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $resolved.PsPath)) + $fwdArray
+        $child = Start-Process -FilePath $powerShellExe -ArgumentList $serverArgs -NoNewWindow -Wait -PassThru
+        [System.Console]::Out.Flush()
+        exit $child.ExitCode
+    } elseif ($pipedInput.Count -gt 0) {
         $pipedInput | & $resolved.PsPath @fwdArray
     } else {
         & $resolved.PsPath @fwdArray

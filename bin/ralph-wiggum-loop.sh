@@ -2306,7 +2306,6 @@ handle_tools_list() {
       "required": ["task", "workerModel", "workerProvider", "reviewerModel", "reviewerProvider"]
     }
     },
-    },
     {
       "name": "ralph_loop_list_harnesses",
       "description": "List all available AI harnesses with their model catalogs",
