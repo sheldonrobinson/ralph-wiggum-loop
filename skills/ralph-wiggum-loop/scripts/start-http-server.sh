@@ -12,6 +12,7 @@ resolve_plugin_root() {
     return 0
   fi
   for cand in \
+    "$(cd "${SCRIPT_DIR}/.." 2>/dev/null && pwd || true)" \
     "$(cd "${SCRIPT_DIR}/../../.." 2>/dev/null && pwd || true)" \
     "$(cd "${SCRIPT_DIR}/../../../.." 2>/dev/null && pwd || true)" \
     "$(pwd)"

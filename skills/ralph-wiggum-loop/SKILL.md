@@ -24,20 +24,24 @@ Per the [Agent Skills Specification](https://agentskills.io/specification), inst
   ```bash
   mkdir -p .agents/skills
   cp -R skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-loop
+  cp -R bin profiles io.github.sheldonrobinson.ralph-wiggum-loop .agents/skills/ralph-wiggum-loop/
   ```
   ```powershell
   New-Item -ItemType Directory -Path .agents/skills -Force | Out-Null
   Copy-Item -Recurse -Force skills/ralph-wiggum-loop .agents/skills/ralph-wiggum-loop
+  Copy-Item -Recurse -Force bin, profiles, io.github.sheldonrobinson.ralph-wiggum-loop .agents/skills/ralph-wiggum-loop
   ```
 - **User-level install (`~/.agents/skills/ralph-wiggum-loop/`):**
   ```bash
   mkdir -p ~/.agents/skills
   cp -R skills/ralph-wiggum-loop ~/.agents/skills/ralph-wiggum-loop
+  cp -R bin profiles io.github.sheldonrobinson.ralph-wiggum-loop ~/.agents/skills/ralph-wiggum-loop/
   ```
 - **Via Skill Installers (`npx skills` / `openskills`):**
   ```bash
   npx skills add sheldonrobinson/ralph-wiggum-loop
   ```
+  Generic skill installers may copy only the skill subdirectory. If `bin`, `profiles`, or `io.github.sheldonrobinson.ralph-wiggum-loop` is absent afterward, copy it from the repository root into the installed skill directory as shown above.
 
 ---
 

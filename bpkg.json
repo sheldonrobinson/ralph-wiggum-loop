@@ -10,5 +10,5 @@
     "bin/script-runner.sh",
     "bin/package-mcpb.sh"
   ],
-  "install": "mkdir -p \"${PREFIX:-${HOME}/.agents/ralph-wiggum-loop}\" \"${HOME}/.agents/skills\" && cp -r plugin.json mcp.json server.json bin profiles skills io.github.sheldonrobinson.ralph-wiggum-loop \"${PREFIX:-${HOME}/.agents/ralph-wiggum-loop}/\" && cp -r skills/ralph-wiggum-loop \"${HOME}/.agents/skills/\""
+  "install": "mkdir -p \"${PREFIX:-${HOME}/.agents/ralph-wiggum-loop}\" \"${HOME}/.agents/skills/ralph-wiggum-loop\" && cp -r plugin.json mcp.json server.json bin profiles skills io.github.sheldonrobinson.ralph-wiggum-loop \"${PREFIX:-${HOME}/.agents/ralph-wiggum-loop}/\" && cp -r skills/ralph-wiggum-loop/. \"${HOME}/.agents/skills/ralph-wiggum-loop/\" && cp -r bin profiles io.github.sheldonrobinson.ralph-wiggum-loop \"${HOME}/.agents/skills/ralph-wiggum-loop/\""
 }

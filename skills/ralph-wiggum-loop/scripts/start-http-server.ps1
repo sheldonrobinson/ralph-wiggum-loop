@@ -10,7 +10,7 @@ function Resolve-PluginRoot {
     if ($env:PLUGIN_ROOT -and (Test-Path (Join-Path $env:PLUGIN_ROOT 'bin\ralph-wiggum-loop.ps1'))) {
         return $env:PLUGIN_ROOT
     }
-    foreach ($rel in @('..\..\..', '..\..\..\..')) {
+    foreach ($rel in @('..', '..\..\..', '..\..\..\..')) {
         $cand = Join-Path $ScriptDir $rel
         if (Test-Path $cand) {
             $resolved = (Resolve-Path $cand).Path

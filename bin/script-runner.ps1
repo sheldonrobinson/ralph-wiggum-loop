@@ -35,6 +35,7 @@ function Resolve-TargetScripts {
     $stripped = $TargetName -replace "\.(ps1|sh)$", ""
     $candidates = @(
         (Join-Path $PluginRoot "bin\$stripped"),
+        (Join-Path $PluginRoot "scripts\$stripped"),
         (Join-Path $PluginRoot ".agents\skills\ralph-wiggum-loop\scripts\$stripped"),
         (Join-Path $PluginRoot "skills\ralph-wiggum-loop\scripts\$stripped"),
         (Join-Path $PluginRoot "io.github.sheldonrobinson.ralph-wiggum-loop\hooks\$stripped"),
@@ -204,6 +205,7 @@ resolve_target_base() {
 
     for candidate in \
         "${PLUGIN_ROOT}/bin/${stripped}" \
+        "${PLUGIN_ROOT}/scripts/${stripped}" \
         "${PLUGIN_ROOT}/.agents/skills/ralph-wiggum-loop/scripts/${stripped}" \
         "${PLUGIN_ROOT}/skills/ralph-wiggum-loop/scripts/${stripped}" \
         "${PLUGIN_ROOT}/io.github.sheldonrobinson.ralph-wiggum-loop/hooks/${stripped}" \

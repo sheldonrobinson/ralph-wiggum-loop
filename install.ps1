@@ -5,9 +5,10 @@
 Installs ralph-wiggum-loop with native PowerShell file operations.
 
 .DESCRIPTION
-Copies the plugin to $HOME\.agents\ralph-wiggum-loop and the canonical Agent
-Skill to $HOME\.agents\skills\ralph-wiggum-loop. Managed directories are
-mirrored so repeated installs update files and remove stale content.
+Copies the plugin to $HOME\.agents\ralph-wiggum-loop and a self-contained
+canonical Agent Skill to $HOME\.agents\skills\ralph-wiggum-loop. Both receive
+the bin, profiles, and hook runtime required by SKILL.md. Managed directories
+are mirrored so repeated installs update files and remove stale content.
 
 .PARAMETER SourceRoot
 Repository root containing the files to install. Defaults to this script's
@@ -231,6 +232,18 @@ $directoryMappings = @(
     @{
         Source = Join-Path -Path $sourcePath -ChildPath 'io.github.sheldonrobinson.ralph-wiggum-loop'
         Destination = Join-Path -Path $pluginPath -ChildPath 'io.github.sheldonrobinson.ralph-wiggum-loop'
+    },
+    @{
+        Source = Join-Path -Path $sourcePath -ChildPath 'bin'
+        Destination = Join-Path -Path $skillPath -ChildPath 'bin'
+    },
+    @{
+        Source = Join-Path -Path $sourcePath -ChildPath 'profiles'
+        Destination = Join-Path -Path $skillPath -ChildPath 'profiles'
+    },
+    @{
+        Source = Join-Path -Path $sourcePath -ChildPath 'io.github.sheldonrobinson.ralph-wiggum-loop'
+        Destination = Join-Path -Path $skillPath -ChildPath 'io.github.sheldonrobinson.ralph-wiggum-loop'
     }
 )
 
