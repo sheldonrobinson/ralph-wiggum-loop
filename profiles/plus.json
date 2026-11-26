@@ -4,14 +4,14 @@
     "initialBackoff":  60,
     "throttleDelay":  15,
     "maxRetries":  5,
-    "monitorModel":  "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "monitorModel":  "google/gemma-4-31b-it",
     "reviewerAgent":  "goose",
     "workGuidelines":  "",
-    "reviewerModel":  "google/gemma-4-31b-it",
+    "reviewerModel":  "nvidia/nemotron-3.5-super-vl-120b-a12b",
     "workerProvider":  "nvidia",
     "monitorAgent":  "goose",
     "monitorProvider":  "nvidia",
-    "workerModel":  "deepseek-ai/deepseek-v4-flash-0731",
+    "workerModel":  "stepfun-ai/step-5-preview",
     "workerAgent":  "goose",
     "reviewerProvider":  "nvidia"
 }

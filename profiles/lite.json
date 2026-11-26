@@ -4,14 +4,14 @@
     "initialBackoff":  60,
     "throttleDelay":  15,
     "maxRetries":  5,
-    "monitorModel":  "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "monitorModel":  "google/gemma-4-31b-it",
     "reviewerAgent":  "goose",
     "workGuidelines":  "",
-    "reviewerModel":  "meta/muse-glimmer-30b",
+    "reviewerModel":  "nvidia/nemotron-3.5-super-vl-120b-a12b",
     "workerProvider":  "nvidia",
     "monitorAgent":  "goose",
     "monitorProvider":  "nvidia",
-    "workerModel":  "google/gemma-4-31b-it",
+    "workerModel":  "minimaxai/minimax-m3.1-flash",
     "workerAgent":  "goose",
     "reviewerProvider":  "nvidia"
 }
