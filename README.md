@@ -53,9 +53,42 @@ Get-Command jq
 jq --version
 ```
 
-## Install Skill (`.agents/skills/`)
+## Install on Windows (PowerShell)
 
-Per the [Agent Skills Specification](https://agentskills.io/specification), install the skill to `.agents/skills/`:
+From the repository root, run the native PowerShell installer:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+This installs the complete plugin and the canonical Agent Skill to:
+
+```text
+$HOME\.agents\ralph-wiggum-loop\
+$HOME\.agents\skills\ralph-wiggum-loop\
+```
+
+The installer uses only PowerShell file operations; no deployment module is required. Run the same command again to update an installation. The `bin`, `profiles`, embedded skill, canonical skill, and hooks/commands directories are mirrored, so stale files in those managed directories are removed.
+
+Use `-AgentsRoot` to install both destinations below a different base directory:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -AgentsRoot C:\Temp\ralph-agents
+```
+
+For independent destinations, use `-PluginRoot` and `-SkillRoot` together:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 `
+  -PluginRoot D:\AgentPlugins\ralph-wiggum-loop `
+  -SkillRoot D:\AgentSkills\ralph-wiggum-loop
+```
+
+After installation, use `$HOME\.agents\ralph-wiggum-loop` as `<install-folder>` in the MCP commands below, or substitute your custom plugin destination.
+
+## Install Only the Agent Skill (`.agents/skills/`)
+
+Per the [Agent Skills Specification](https://agentskills.io/specification), install just the skill to `.agents/skills/`:
 
 ```bash
 # Project-level (.agents/skills/ralph-wiggum-loop) or User-level (~/.agents/skills/ralph-wiggum-loop)

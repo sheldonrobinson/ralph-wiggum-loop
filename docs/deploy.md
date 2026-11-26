@@ -14,9 +14,46 @@ cd ralph-wiggum-loop
 chmod +x bin/ralph-wiggum-loop.sh bin/script-runner.sh bin/script-runner
 ```
 
-### Install Agent Skill to `.agents/skills/`
+### Windows: Install the Plugin and Agent Skill
 
-Per the [Agent Skills Specification](https://agentskills.io/specification), install the skill to `.agents/skills/` (project-level `<project>/.agents/skills/ralph-wiggum-loop` or user-level `~/.agents/skills/ralph-wiggum-loop`):
+Run the native PowerShell installer from the repository root:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+The default destinations are:
+
+```text
+$HOME\.agents\ralph-wiggum-loop\          # Complete plugin
+$HOME\.agents\skills\ralph-wiggum-loop\  # Canonical Agent Skill
+```
+
+No deployment module is required. The installer validates the source manifests, copies the top-level plugin files, and mirrors `bin`, `profiles`, the embedded and canonical skills, and hooks/commands with native PowerShell file operations. Repeating the command updates changed files and removes stale content from those managed directories.
+
+To stage or test an installation without touching your real `.agents` directory, choose a temporary base:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -AgentsRoot C:\Temp\ralph-agents
+```
+
+This creates `C:\Temp\ralph-agents\ralph-wiggum-loop` and `C:\Temp\ralph-agents\skills\ralph-wiggum-loop`. You can instead set `-PluginRoot` and `-SkillRoot` independently:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 `
+  -PluginRoot D:\AgentPlugins\ralph-wiggum-loop `
+  -SkillRoot D:\AgentSkills\ralph-wiggum-loop
+```
+
+Use the resulting plugin destination as `PLUGIN_ROOT` when configuring MCP. For example, the default installed Windows stdio launch is:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File "$HOME\.agents\ralph-wiggum-loop\bin\script-runner.ps1" --use-pwsh ralph-wiggum-loop --stdio
+```
+
+### Install Only the Agent Skill to `.agents/skills/`
+
+Per the [Agent Skills Specification](https://agentskills.io/specification), install just the skill to `.agents/skills/` (project-level `<project>/.agents/skills/ralph-wiggum-loop` or user-level `~/.agents/skills/ralph-wiggum-loop`):
 
 ```bash
 # Linux / macOS
